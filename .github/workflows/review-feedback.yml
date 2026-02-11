@@ -1,0 +1,121 @@
+name: "Review Feedback Handler"
+
+# Reacts to PR review events.
+# On approval: moves issue to "Ready to Deploy"
+# On changes requested: moves issue back to "Dev" and re-dispatches agent-dev
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+env:
+  PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+  PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
+
+jobs:
+  handle-review:
+    # Only handle reviews on agent-created PRs
+    if: startsWith(github.event.pull_request.head.ref, 'agent/issue-')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract issue number from branch
+        id: extract
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          ISSUE_NUM=$(echo "$BRANCH" | sed 's/agent\/issue-//')
+          echo "issue_number=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
+          echo "Review state: ${{ github.event.review.state }}"
+          echo "Issue number: $ISSUE_NUM"
+
+      - name: Get project item ID
+        id: item
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          ISSUE_NUM="${{ steps.extract.outputs.issue_number }}"
+
+          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" \
+            --owner "$PROJECT_OWNER" \
+            --format json --limit 500 \
+            | jq -r --argjson num "$ISSUE_NUM" \
+              '.items[] | select(.content.number == ($num | tonumber)) | .id')
+
+          echo "item_id=$ITEM_ID" >> "$GITHUB_OUTPUT"
+
+      - name: On Approval — move to Ready to Deploy
+        if: github.event.review.state == 'approved'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          chmod +x ./scripts/move-issue.sh
+
+          ITEM_ID="${{ steps.item.outputs.item_id }}"
+          ISSUE_NUM="${{ steps.extract.outputs.issue_number }}"
+
+          if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
+            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Ready to Deploy"
+
+            gh issue comment "$ISSUE_NUM" \
+              --repo "${{ github.repository }}" \
+              --body "✅ **Review approved.** Moving to deployment queue."
+
+            # Remove the review-notified label so dispatcher doesn't re-notify
+            gh issue edit "$ISSUE_NUM" \
+              --repo "${{ github.repository }}" \
+              --remove-label "review-notified" 2>/dev/null || true
+          fi
+
+      - name: On Changes Requested — move back to Dev
+        if: github.event.review.state == 'changes_requested'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          chmod +x ./scripts/move-issue.sh
+
+          ITEM_ID="${{ steps.item.outputs.item_id }}"
+          ISSUE_NUM="${{ steps.extract.outputs.issue_number }}"
+
+          if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
+            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Dev"
+
+            # Extract review comments as context for the dev agent
+            REVIEW_BODY="${{ github.event.review.body }}"
+
+            PR_COMMENTS=$(gh pr view "${{ github.event.pull_request.number }}" \
+              --repo "${{ github.repository }}" \
+              --json reviewDecision,reviews \
+              --jq '.reviews[] | select(.state == "CHANGES_REQUESTED") | .body' \
+              | tail -5)
+
+            RETRY_CONTEXT="Human reviewer requested changes:\n\n${REVIEW_BODY}\n\n${PR_COMMENTS}"
+
+            gh issue comment "$ISSUE_NUM" \
+              --repo "${{ github.repository }}" \
+              --body "$(cat <<EOF
+          🔄 **Changes requested.** Moving back to Dev.
+
+          Reviewer feedback:
+          > ${REVIEW_BODY}
+
+          Re-dispatching development agent with feedback context.
+          EOF
+          )"
+
+            # Re-dispatch agent-dev with review feedback
+            gh workflow run agent-dev.yml \
+              -f issue_number="$ISSUE_NUM" \
+              -f retry_context="$RETRY_CONTEXT" \
+              --repo "${{ github.repository }}"
+
+            # Remove the review-notified label
+            gh issue edit "$ISSUE_NUM" \
+              --repo "${{ github.repository }}" \
+              --remove-label "review-notified" 2>/dev/null || true
+          fi

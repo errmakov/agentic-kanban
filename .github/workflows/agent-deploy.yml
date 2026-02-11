@@ -1,0 +1,168 @@
+name: "Agent: Deploy"
+
+# Merges the PR, triggers deployment, runs smoke tests.
+# Moves to Done on success, back to Dev on failure.
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to deploy'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+  PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PROJECT_PAT }}
+
+      - name: Find PR for this issue
+        id: find-pr
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          BRANCH="agent/issue-${{ inputs.issue_number }}"
+
+          PR_DATA=$(gh pr list --repo "${{ github.repository }}" \
+            --head "$BRANCH" \
+            --json number,url,mergeable,reviewDecision \
+            -q '.[0]')
+
+          if [ -z "$PR_DATA" ] || [ "$PR_DATA" = "null" ]; then
+            echo "::error::No PR found for branch $BRANCH"
+            exit 1
+          fi
+
+          PR_NUMBER=$(echo "$PR_DATA" | jq -r '.number')
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Found PR #${PR_NUMBER}"
+
+      - name: Merge PR
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          PR_NUMBER="${{ steps.find-pr.outputs.pr_number }}"
+
+          # Mark PR as ready (it was draft)
+          gh pr ready "$PR_NUMBER" --repo "${{ github.repository }}" 2>/dev/null || true
+
+          # Merge with squash
+          gh pr merge "$PR_NUMBER" \
+            --repo "${{ github.repository }}" \
+            --squash \
+            --delete-branch \
+            --body "Merged by agent-deploy for issue #${{ inputs.issue_number }}"
+
+          echo "::notice::PR #${PR_NUMBER} merged successfully"
+
+      - name: Wait for deploy
+        run: |
+          # Option 1: Trigger deploy hook (Vercel, Railway, etc.)
+          if [ -n "${{ vars.DEPLOY_HOOK_URL }}" ]; then
+            echo "Triggering deploy hook..."
+            curl -s -X POST "${{ vars.DEPLOY_HOOK_URL }}"
+          fi
+
+          # Wait for deployment to propagate
+          echo "Waiting 60s for deployment to propagate..."
+          sleep 60
+
+      - name: Smoke test
+        id: smoke
+        run: |
+          PRODUCTION_URL="${{ vars.PRODUCTION_URL }}"
+
+          if [ -z "$PRODUCTION_URL" ]; then
+            echo "::warning::No PRODUCTION_URL configured, skipping smoke test"
+            echo "smoke_passed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Running smoke test against $PRODUCTION_URL"
+
+          # Basic health check
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$PRODUCTION_URL" --max-time 30)
+
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
+            echo "::notice::Smoke test passed (HTTP $HTTP_STATUS)"
+            echo "smoke_passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Smoke test failed (HTTP $HTTP_STATUS)"
+            echo "smoke_passed=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Move to Done
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          chmod +x ./scripts/move-issue.sh
+
+          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" \
+            --owner "$PROJECT_OWNER" \
+            --format json --limit 500 \
+            | jq -r --argjson num "${{ inputs.issue_number }}" \
+              '.items[] | select(.content.number == $num) | .id')
+
+          if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
+            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Done"
+          fi
+
+          # Close the issue
+          gh issue close "${{ inputs.issue_number }}" \
+            --repo "${{ github.repository }}" \
+            --comment "$(cat <<EOF
+          ## ✅ Deployed (automated)
+
+          Issue implemented, tested, reviewed, and deployed successfully.
+
+          ---
+          _Closed by agent-deploy | $(date -u +%Y-%m-%dT%H:%M:%SZ)_
+          EOF
+          )"
+
+          # Remove review-notified label
+          gh issue edit "${{ inputs.issue_number }}" \
+            --repo "${{ github.repository }}" \
+            --remove-label "review-notified" 2>/dev/null || true
+
+      - name: Handle failure — rollback to Dev
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          chmod +x ./scripts/move-issue.sh ./scripts/notify-telegram.sh
+
+          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" \
+            --owner "$PROJECT_OWNER" \
+            --format json --limit 500 \
+            | jq -r --argjson num "${{ inputs.issue_number }}" \
+              '.items[] | select(.content.number == $num) | .id')
+
+          if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
+            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Dev"
+          fi
+
+          gh issue comment "${{ inputs.issue_number }}" \
+            --repo "${{ github.repository }}" \
+            --body "⚠️ **Deployment failed.** Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details. Moving back to Dev."
+
+          ./scripts/notify-telegram.sh \
+            "⚠️ Deploy failed for issue #${{ inputs.issue_number }}. Moved back to Dev."

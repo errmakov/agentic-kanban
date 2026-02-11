@@ -1,0 +1,237 @@
+name: "Agent: Testing"
+
+# Writes unit and e2e tests for the implemented feature.
+# Runs the test suite, retries on failure, moves to Human Review.
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to test'
+        required: true
+        type: string
+      pr_number:
+        description: 'PR number containing the implementation'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+  PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
+  MAX_RETRIES: 3
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PROJECT_PAT }}
+          ref: "agent/issue-${{ inputs.issue_number }}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Gather context
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          chmod +x ./scripts/get-issue-context.sh
+          ./scripts/get-issue-context.sh "${{ github.repository }}" "${{ inputs.issue_number }}" > /tmp/issue-context.md
+
+          # Get the diff for this PR
+          gh pr diff "${{ inputs.pr_number }}" --repo "${{ github.repository }}" > /tmp/pr-diff.txt 2>/dev/null || true
+
+          echo "--- PR Diff Stats ---"
+          wc -l /tmp/pr-diff.txt
+
+      - name: Run Claude Code — write tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ISSUE_CONTEXT=$(cat /tmp/issue-context.md)
+          PR_DIFF=$(cat /tmp/pr-diff.txt)
+          TEST_PROMPT=$(cat ./prompts/test-system.md)
+
+          claude -p "$(cat <<PROMPT
+          ${TEST_PROMPT}
+
+          ## Issue Context
+
+          ${ISSUE_CONTEXT}
+
+          ## PR Diff (what was implemented)
+
+          \`\`\`diff
+          ${PR_DIFF}
+          \`\`\`
+
+          ## Instructions
+
+          1. Read CLAUDE.md for project test conventions
+          2. Read the changed files to understand the implementation
+          3. Write unit tests for all new/changed functions
+          4. Write e2e tests for any new user-facing flows
+          5. Run the test suite and fix any failures
+          PROMPT
+          )" \
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm run test *),Bash(npm test *),Bash(npx vitest *),Bash(npx playwright *),Bash(npm run test:e2e *),Bash(npm run lint),Bash(npm run typecheck),Bash(git diff *),Bash(git status)" \
+            --model claude-sonnet-4-5-20250929 \
+            --max-turns 25
+
+      - name: Run test suite — verify
+        id: verify
+        run: |
+          set +e
+          npm run test 2>&1 | tee /tmp/test-output.txt
+          TEST_EXIT=$?
+          set -e
+
+          echo "test_exit=$TEST_EXIT" >> "$GITHUB_OUTPUT"
+
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "::warning::Tests failed with exit code $TEST_EXIT"
+          else
+            echo "::notice::All tests passing"
+          fi
+
+      - name: Retry on test failure
+        if: steps.verify.outputs.test_exit != '0'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ATTEMPT=1
+
+          while [ $ATTEMPT -le $MAX_RETRIES ]; do
+            echo "::notice::Test fix attempt $ATTEMPT of $MAX_RETRIES"
+
+            TEST_OUTPUT=$(cat /tmp/test-output.txt)
+
+            claude -p "$(cat <<PROMPT
+          The test suite is failing. Fix the failures.
+
+          ## Test Output
+          \`\`\`
+          ${TEST_OUTPUT}
+          \`\`\`
+
+          Fix the failing tests. The issue might be in the tests themselves or in the implementation code.
+          After fixing, the tests should pass.
+          PROMPT
+          )" \
+              --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm run test *),Bash(npm test *),Bash(npx vitest *),Bash(npm run lint),Bash(git diff *)" \
+              --model claude-sonnet-4-5-20250929 \
+              --max-turns 15
+
+            # Re-run tests
+            set +e
+            npm run test 2>&1 | tee /tmp/test-output.txt
+            TEST_EXIT=$?
+            set -e
+
+            if [ $TEST_EXIT -eq 0 ]; then
+              echo "::notice::Tests passing after attempt $ATTEMPT"
+              break
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "::error::Tests still failing after $MAX_RETRIES retries"
+            exit 1
+          fi
+
+      - name: Commit and push test code
+        run: |
+          BRANCH="agent/issue-${{ inputs.issue_number }}"
+
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No test changes to commit"
+          else
+            git config user.name "agentic-kanban[bot]"
+            git config user.email "agentic-kanban[bot]@users.noreply.github.com"
+
+            git add -A
+            git commit -m "$(cat <<'EOF'
+          test: add tests for #${{ inputs.issue_number }}
+
+          Automated tests by agent-test.
+
+          Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
+          EOF
+          )"
+
+            git push origin "$BRANCH" --force-with-lease
+          fi
+
+      - name: Post test report
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          # Generate test summary
+          TEST_SUMMARY=$(npm run test -- --reporter=verbose 2>&1 | tail -20 || true)
+
+          gh issue comment "${{ inputs.issue_number }}" \
+            --repo "${{ github.repository }}" \
+            --body "$(cat <<EOF
+          ## 🧪 Test Report (automated)
+
+          All tests passing. Test output:
+
+          \`\`\`
+          ${TEST_SUMMARY}
+          \`\`\`
+
+          Moving to human review.
+
+          ---
+          _Generated by agent-test | $(date -u +%Y-%m-%dT%H:%M:%SZ)_
+          EOF
+          )"
+
+      - name: Move to Human Review
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          chmod +x ./scripts/move-issue.sh
+
+          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" \
+            --owner "$PROJECT_OWNER" \
+            --format json --limit 500 \
+            | jq -r --argjson num "${{ inputs.issue_number }}" \
+              '.items[] | select(.content.number == $num) | .id')
+
+          if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
+            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Human Review"
+          fi
+
+      - name: Handle failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          chmod +x ./scripts/notify-telegram.sh
+
+          gh issue comment "${{ inputs.issue_number }}" \
+            --repo "${{ github.repository }}" \
+            --body "⚠️ **Test agent failed after ${MAX_RETRIES} retries.** Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+
+          ./scripts/notify-telegram.sh \
+            "⚠️ Test agent failed for issue #${{ inputs.issue_number }} after ${MAX_RETRIES} retries. Manual intervention needed."

@@ -1,0 +1,232 @@
+name: "Agent: Development"
+
+# Implements the feature described in the issue, guided by SA/BA analysis.
+# Creates a feature branch, writes code, creates a draft PR, moves to Test.
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to implement'
+        required: true
+        type: string
+      retry_context:
+        description: 'Additional context from a retry (test failures, review feedback)'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+  PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
+
+jobs:
+  develop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PROJECT_PAT }}
+
+      - name: Gather full context
+        id: context
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          chmod +x ./scripts/get-issue-context.sh
+          ./scripts/get-issue-context.sh "${{ github.repository }}" "${{ inputs.issue_number }}" > /tmp/issue-context.md
+
+          echo "--- Issue Context ---"
+          cat /tmp/issue-context.md
+
+      - name: Setup branch
+        id: branch
+        run: |
+          BRANCH="agent/issue-${{ inputs.issue_number }}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+          # Check if branch already exists (retry scenario)
+          if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
+            echo "Branch exists, checking out and pulling latest"
+            git checkout "$BRANCH"
+            git pull origin "$BRANCH"
+          else
+            echo "Creating new branch"
+            git checkout -b "$BRANCH"
+          fi
+
+      - name: Run Claude Code — implement feature
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ISSUE_CONTEXT=$(cat /tmp/issue-context.md)
+          DEV_PROMPT=$(cat ./prompts/dev-system.md)
+          RETRY_CONTEXT="${{ inputs.retry_context }}"
+
+          FULL_PROMPT="$(cat <<PROMPT
+          ${DEV_PROMPT}
+
+          ## Issue to Implement
+
+          ${ISSUE_CONTEXT}
+          PROMPT
+          )"
+
+          # Append retry context if this is a retry
+          if [ -n "$RETRY_CONTEXT" ]; then
+            FULL_PROMPT="$(cat <<PROMPT
+          ${FULL_PROMPT}
+
+          ## Retry Context (fix these issues)
+
+          ${RETRY_CONTEXT}
+          PROMPT
+          )"
+          fi
+
+          claude -p "$FULL_PROMPT" \
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm install *),Bash(npm run build),Bash(npm run lint),Bash(npm run typecheck),Bash(npm run test),Bash(git diff *),Bash(git status)" \
+            --model claude-opus-4-6 \
+            --max-turns 30
+
+      - name: Verify build passes
+        run: |
+          npm run build 2>&1 || true
+          npm run typecheck 2>&1 || true
+          npm run lint 2>&1 || true
+
+      - name: Commit and push
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          BRANCH="${{ steps.branch.outputs.branch }}"
+
+          # Check if there are changes to commit
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "::warning::No changes produced by the agent"
+            exit 1
+          fi
+
+          git config user.name "agentic-kanban[bot]"
+          git config user.email "agentic-kanban[bot]@users.noreply.github.com"
+
+          git add -A
+          git commit -m "$(cat <<'EOF'
+          feat: implement #${{ inputs.issue_number }}
+
+          Automated implementation by agent-dev.
+
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+          EOF
+          )"
+
+          git push origin "$BRANCH" --force-with-lease
+
+      - name: Create or update PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          BRANCH="${{ steps.branch.outputs.branch }}"
+          ISSUE_TITLE=$(gh issue view "${{ inputs.issue_number }}" --repo "${{ github.repository }}" --json title -q '.title')
+
+          # Check if PR already exists
+          EXISTING_PR=$(gh pr list --repo "${{ github.repository }}" \
+            --head "$BRANCH" --json number -q '.[0].number // empty')
+
+          if [ -n "$EXISTING_PR" ]; then
+            echo "PR #${EXISTING_PR} already exists, it's been updated with new commits"
+            echo "pr_number=$EXISTING_PR" >> "$GITHUB_OUTPUT"
+          else
+            PR_URL=$(gh pr create \
+              --repo "${{ github.repository }}" \
+              --head "$BRANCH" \
+              --title "feat: ${ISSUE_TITLE}" \
+              --body "$(cat <<EOF
+          ## Summary
+
+          Automated implementation for #${{ inputs.issue_number }}.
+
+          See the SA/BA analysis and implementation notes in the issue comments.
+
+          ## Linked Issue
+
+          Closes #${{ inputs.issue_number }}
+
+          ---
+          _Generated by agent-dev_
+          EOF
+          )" \
+              --draft)
+
+            PR_NUMBER=$(echo "$PR_URL" | grep -o '[0-9]*$')
+            echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+            echo "Created PR: $PR_URL"
+          fi
+
+      - name: Post implementation comment
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          BRANCH="${{ steps.branch.outputs.branch }}"
+          DIFF_STAT=$(git diff --stat origin/main..."$BRANCH" 2>/dev/null | tail -1)
+
+          gh issue comment "${{ inputs.issue_number }}" \
+            --repo "${{ github.repository }}" \
+            --body "$(cat <<EOF
+          ## 🔨 Implementation Complete (automated)
+
+          - **Branch**: \`${BRANCH}\`
+          - **PR**: #${{ steps.pr.outputs.pr_number }}
+          - **Changes**: ${DIFF_STAT}
+
+          Moving to testing phase.
+
+          ---
+          _Generated by agent-dev | $(date -u +%Y-%m-%dT%H:%M:%SZ)_
+          EOF
+          )"
+
+      - name: Move to Test and dispatch agent-test
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          chmod +x ./scripts/move-issue.sh
+
+          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" \
+            --owner "$PROJECT_OWNER" \
+            --format json --limit 500 \
+            | jq -r --argjson num "${{ inputs.issue_number }}" \
+              '.items[] | select(.content.number == $num) | .id')
+
+          if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
+            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Test"
+
+            gh workflow run agent-test.yml \
+              -f issue_number="${{ inputs.issue_number }}" \
+              -f pr_number="${{ steps.pr.outputs.pr_number }}" \
+              --repo "${{ github.repository }}"
+          fi
+
+      - name: Handle failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          chmod +x ./scripts/notify-telegram.sh
+
+          gh issue comment "${{ inputs.issue_number }}" \
+            --repo "${{ github.repository }}" \
+            --body "⚠️ **Development agent failed.** Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+
+          ./scripts/notify-telegram.sh \
+            "⚠️ Dev agent failed for issue #${{ inputs.issue_number }}. Needs manual attention."

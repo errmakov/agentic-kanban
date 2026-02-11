@@ -1,0 +1,114 @@
+name: Dispatcher
+
+# Polls the GitHub Project board every 5 minutes.
+# Detects issues that need agent attention and dispatches the right workflow.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Log actions without executing them'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: read
+  actions: write
+
+env:
+  PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+  PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
+
+jobs:
+  poll-and-dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Poll project board
+        id: poll
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          chmod +x ./scripts/poll-board.sh
+          ./scripts/poll-board.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" > board-state.json
+          cat board-state.json
+
+      - name: Dispatch agents for "Ready for Work" items
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          chmod +x ./scripts/move-issue.sh
+
+          jq -c '.[] | select(.status == "Ready for Work")' board-state.json | while read -r item; do
+            ISSUE_NUM=$(echo "$item" | jq -r '.number')
+            ITEM_ID=$(echo "$item" | jq -r '.item_id')
+            TITLE=$(echo "$item" | jq -r '.title')
+
+            echo "::notice::Dispatching SA/BA for issue #${ISSUE_NUM}: ${TITLE}"
+
+            if [ "${{ inputs.dry_run }}" != "true" ]; then
+              # Move to SA/BA
+              ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "SA/BA"
+
+              # Dispatch SA/BA agent
+              gh workflow run agent-saba.yml \
+                -f issue_number="$ISSUE_NUM" \
+                --repo "${{ github.repository }}"
+            fi
+          done
+
+      - name: Notify for "Human Review" items
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          chmod +x ./scripts/notify-telegram.sh
+
+          jq -c '.[] | select(.status == "Human Review")' board-state.json | while read -r item; do
+            ISSUE_NUM=$(echo "$item" | jq -r '.number')
+            TITLE=$(echo "$item" | jq -r '.title')
+
+            # Check if we already notified (avoid spam on every poll)
+            LABELS=$(gh issue view "$ISSUE_NUM" --repo "${{ github.repository }}" --json labels -q '.labels[].name')
+            if echo "$LABELS" | grep -q "review-notified"; then
+              echo "Already notified for #${ISSUE_NUM}, skipping"
+              continue
+            fi
+
+            echo "::notice::Sending review notification for issue #${ISSUE_NUM}"
+
+            if [ "${{ inputs.dry_run }}" != "true" ]; then
+              # Find the PR linked to this issue
+              PR_URL=$(gh pr list --repo "${{ github.repository }}" \
+                --search "head:agent/issue-${ISSUE_NUM}" \
+                --json url -q '.[0].url // "No PR found"')
+
+              ./scripts/notify-telegram.sh \
+                "🔍 *Review Needed*: Issue #${ISSUE_NUM}\n\n*${TITLE}*\n\nPR: ${PR_URL}\nIssue: ${{ github.server_url }}/${{ github.repository }}/issues/${ISSUE_NUM}"
+
+              # Mark as notified to avoid duplicate notifications
+              gh issue edit "$ISSUE_NUM" --repo "${{ github.repository }}" --add-label "review-notified"
+            fi
+          done
+
+      - name: Dispatch deploy for "Ready to Deploy" items
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          jq -c '.[] | select(.status == "Ready to Deploy")' board-state.json | while read -r item; do
+            ISSUE_NUM=$(echo "$item" | jq -r '.number')
+            TITLE=$(echo "$item" | jq -r '.title')
+
+            echo "::notice::Dispatching deploy for issue #${ISSUE_NUM}: ${TITLE}"
+
+            if [ "${{ inputs.dry_run }}" != "true" ]; then
+              gh workflow run agent-deploy.yml \
+                -f issue_number="$ISSUE_NUM" \
+                --repo "${{ github.repository }}"
+            fi
+          done
