@@ -14,16 +14,26 @@ PROJECT_NUMBER="${2:?Usage: move-issue.sh <owner> <project_number> <item_id> <ta
 ITEM_ID="${3:?Usage: move-issue.sh <owner> <project_number> <item_id> <target_status>}"
 TARGET_STATUS="${4:?Usage: move-issue.sh <owner> <project_number> <item_id> <target_status>}"
 
-# Get the project ID
-PROJECT_ID=$(gh project view "$PROJECT_NUMBER" --owner "$OWNER" --format json | jq -r '.id')
+# The project ID and Status field/option IDs are static, but each query costs
+# GraphQL points and contributes to GitHub's burst (secondary) rate limit. Cache
+# them per-runner in /tmp so repeated moves in one tick skip the two read queries.
+CACHE="/tmp/fw-project-${OWNER}-${PROJECT_NUMBER}.json"
+if [ -s "$CACHE" ]; then
+  PROJECT_ID=$(jq -r '.project_id' "$CACHE")
+  FIELDS_JSON=$(jq -c '.fields' "$CACHE")
+else
+  PROJECT_ID=$(gh project view "$PROJECT_NUMBER" --owner "$OWNER" --format json | jq -r '.id')
+  FIELDS_JSON=$(gh project field-list "$PROJECT_NUMBER" --owner "$OWNER" --format json)
+  if [ -n "$PROJECT_ID" ] && [ "$PROJECT_ID" != "null" ]; then
+    jq -n --arg pid "$PROJECT_ID" --argjson fields "$FIELDS_JSON" \
+      '{project_id: $pid, fields: $fields}' > "$CACHE" 2>/dev/null || true
+  fi
+fi
 
 if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "null" ]; then
   echo "Error: Could not find project #${PROJECT_NUMBER} for owner ${OWNER}" >&2
   exit 1
 fi
-
-# Get the Status field ID and option IDs
-FIELDS_JSON=$(gh project field-list "$PROJECT_NUMBER" --owner "$OWNER" --format json)
 
 STATUS_FIELD_ID=$(echo "$FIELDS_JSON" | jq -r '.fields[] | select(.name == "Status") | .id')
 
