@@ -100,11 +100,13 @@ jobs:
           fi
 
       - name: Refresh master after merges
+        id: refresh
         if: steps.collect.outputs.count != '0' && inputs.dry_run != true
         run: |
           git fetch origin master
           git checkout master
           git reset --hard origin/master
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         if: steps.collect.outputs.count != '0' && inputs.dry_run != true
@@ -127,7 +129,9 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:${{ steps.refresh.outputs.sha }}
+          build-args: |
+            GIT_SHA=${{ steps.refresh.outputs.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -219,12 +223,19 @@ jobs:
             exit 0
           fi
           CODE=$(curl -s -o /dev/null -w "%{http_code}" "$URL" --max-time 30)
-          if [ "$CODE" -ge 200 ] && [ "$CODE" -lt 400 ]; then
-            echo "::notice::Smoke test passed (HTTP $CODE)"
-          else
+          if [ "$CODE" -lt 200 ] || [ "$CODE" -ge 400 ]; then
             echo "::error::Smoke test failed (HTTP $CODE)"
             exit 1
           fi
+
+          # Assert the LIVE build is the one we just shipped (catches stale/no-op deploys).
+          EXPECT="${{ steps.refresh.outputs.sha }}"
+          LIVE=$(curl -s "$URL/api/health" --max-time 30 | jq -r '.version // ""')
+          if [ "$LIVE" != "$EXPECT" ]; then
+            echo "::error::Stale deploy: live version '${LIVE}' != built '${EXPECT}'"
+            exit 1
+          fi
+          echo "::notice::Smoke test passed (HTTP $CODE, version ${LIVE})"
 
       - name: Move merged items to Done + close
         if: success() && steps.collect.outputs.count != '0' && inputs.dry_run != true

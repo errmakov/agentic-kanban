@@ -24,6 +24,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
+# Build identity — passed by the deploy workflow; exposed at /api/health as `version`
+# so a deploy can prove the new build is actually live (not a stale container).
+ARG GIT_SHA=dev
+ENV BUILD_SHA=$GIT_SHA
+
 RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 nextjs
 
