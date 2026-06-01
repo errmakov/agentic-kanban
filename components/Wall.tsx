@@ -1,3 +1,5 @@
+import { BreakCountdown } from './BreakCountdown';
+
 export function Wall() {
   return (
     <section aria-labelledby="wall-heading" className="space-y-4">
@@ -8,6 +10,7 @@ export function Wall() {
         This page is built live during the session. Each feature you see appear was
         implemented by an AI agent pulling a card across the board.
       </p>
+      <BreakCountdown />
     </section>
   );
 }
