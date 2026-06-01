@@ -38,6 +38,20 @@ retry() {
   return 1
 }
 
+# find_item <issue_number> : return the project item id for an issue, polling until
+# it appears. The repo auto-adds issues to the linked project asynchronously, so an
+# item-add can race it and a single lookup can run before the item has propagated.
+find_item() {
+  local num="$1" i id
+  for ((i = 1; i <= 8; i++)); do
+    id=$(gh project item-list "$PROJECT" --owner "$OWNER" --format json --limit 500 2>/dev/null \
+      | jq -r --argjson n "$num" '.items[] | select(.content.number == $n) | .id')
+    if [ -n "$id" ] && [ "$id" != "null" ]; then printf '%s' "$id"; return 0; fi
+    sleep 2
+  done
+  return 1
+}
+
 # Ensure the tracking label exists (idempotent).
 gh label create demo-backlog --repo "${OWNER}/${REPO}" \
   --color BFD4F2 --description "FactoryWall demo backlog card" 2>/dev/null || true
@@ -81,8 +95,8 @@ for entry in "${BACKLOG[@]}"; do
   # report "already exists" — in that case just look the item up instead of failing.
   ITEM_ID=$(gh project item-add "$PROJECT" --owner "$OWNER" --url "$ISSUE_URL" --format json 2>/tmp/seed-err.txt | jq -r '.id' 2>/dev/null || true)
   if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
-    ITEM_ID=$(retry 6 3 gh project item-list "$PROJECT" --owner "$OWNER" --format json --limit 500 \
-      | jq -r --argjson n "$NUM" '.items[] | select(.content.number == $n) | .id')
+    # add raced the repo auto-add — poll until the item shows up
+    ITEM_ID=$(find_item "$NUM")
   fi
 
   if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
