@@ -1,0 +1,165 @@
+name: "Agent: Resolve (merge-conflict swarm)"
+
+# Dispatched by agent-deploy when an approved PR can't be squash-merged because the
+# feature branch conflicts with master (usually parallel features editing the same
+# file). Merges master INTO the feature branch and resolves the conflicts in place
+# with Opus, verifies the build, and pushes — up to MAX_RESOLVE rounds, then escalates
+# to needs-human. The card never moves; it stays in Ready to Deploy, and the next
+# batch-deploy kick merges it cleanly.
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue whose branch needs conflict resolution'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+env:
+  PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+  PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
+  MAX_RESOLVE: 3
+  RESOLVE_MARKER: "Conflict resolve — attempt"
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PROJECT_PAT }}
+          ref: "agent/issue-${{ inputs.issue_number }}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Determine attempt number
+        id: attempt
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          PRIOR=$(gh issue view "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --json comments -q "[.comments[] | select(.body | contains(\"${RESOLVE_MARKER}\"))] | length")
+          echo "n=$(( PRIOR + 1 ))" >> "$GITHUB_OUTPUT"
+          echo "Conflict-resolve attempt $(( PRIOR + 1 )) of $MAX_RESOLVE"
+
+      # ---------- Escalate if exhausted ----------
+      - name: Escalate to human (rounds exhausted)
+        if: ${{ fromJSON(steps.attempt.outputs.n) > fromJSON(env.MAX_RESOLVE) }}
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          chmod +x ./scripts/notify-telegram.sh
+          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --add-label "needs-human" || true
+          gh issue comment "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --body "🆘 **Could not auto-resolve the merge conflict after ${MAX_RESOLVE} rounds.** Card stays in Ready to Deploy with \`needs-human\` — resolve \`agent/issue-${{ inputs.issue_number }}\` against master by hand, then re-run the batch deploy."
+          ./scripts/notify-telegram.sh "🆘 Merge conflict on #${{ inputs.issue_number }} needs a human after ${MAX_RESOLVE} resolve attempts."
+
+      - name: Stop if escalated
+        if: ${{ fromJSON(steps.attempt.outputs.n) > fromJSON(env.MAX_RESOLVE) }}
+        run: |
+          echo "Escalated — nothing more to try."
+          exit 0
+
+      - name: Record attempt
+        if: ${{ fromJSON(steps.attempt.outputs.n) <= fromJSON(env.MAX_RESOLVE) }}
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          gh issue comment "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --body "🧩 **${RESOLVE_MARKER} ${{ steps.attempt.outputs.n }}/${MAX_RESOLVE}** (automated) — merging master into the branch and resolving."
+
+      - name: Merge master and resolve conflicts
+        if: ${{ fromJSON(steps.attempt.outputs.n) <= fromJSON(env.MAX_RESOLVE) }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          git config user.name "agentic-kanban[bot]"
+          git config user.email "agentic-kanban[bot]@users.noreply.github.com"
+          git fetch origin master
+
+          if git merge origin/master --no-edit; then
+            echo "Merged master cleanly — no conflict to resolve."
+          else
+            echo "Conflicts present — invoking Claude to resolve."
+            STATUS=$(git status --porcelain)
+            claude -p "$(cat <<PROMPT
+          You are resolving git merge conflicts on a feature branch after merging
+          origin/master into it. Resolve EVERY conflict so the result builds and
+          preserves BOTH the feature's intent and master's changes (do not drop
+          either side). Read CLAUDE.md first. Edit the conflicted files to remove
+          all conflict markers. Do NOT run git commit — just leave the files fixed.
+
+          git status (porcelain):
+          ${STATUS}
+          PROMPT
+          )" \
+              --allowedTools "Read,Edit,Write,Glob,Grep,Bash(git diff *),Bash(git status),Bash(npm run build),Bash(npm run typecheck),Bash(npm run lint)" \
+              --model claude-opus-4-8 \
+              --max-turns 30
+
+            git add -A
+            if git diff --cached --quiet; then
+              echo "::error::No resolution produced by the agent"
+              exit 1
+            fi
+            git commit -m "merge: resolve conflicts with master for #${{ inputs.issue_number }}"
+          fi
+
+      - name: Verify build
+        id: verify
+        if: ${{ fromJSON(steps.attempt.outputs.n) <= fromJSON(env.MAX_RESOLVE) }}
+        run: |
+          set +e
+          npm run typecheck && npm run build
+          echo "ok=$?" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: Push resolved branch (success)
+        if: ${{ fromJSON(steps.attempt.outputs.n) <= fromJSON(env.MAX_RESOLVE) && steps.verify.outputs.ok == '0' }}
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          git push origin "agent/issue-${{ inputs.issue_number }}"
+          gh issue comment "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --body "✅ **Conflict resolved** (attempt ${{ steps.attempt.outputs.n }}) and the branch builds. Re-run the batch deploy to ship it."
+
+      - name: Retry next round (build failed)
+        if: ${{ fromJSON(steps.attempt.outputs.n) <= fromJSON(env.MAX_RESOLVE) && steps.verify.outputs.ok != '0' }}
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          # Don't push a broken resolution. Re-dispatch for the next round; the attempt
+          # counter (from comments) bounds it at MAX_RESOLVE, then we escalate.
+          gh issue comment "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --body "🔁 Resolve attempt ${{ steps.attempt.outputs.n }} didn't build — retrying."
+          gh workflow run agent-resolve.yml -f issue_number="${{ inputs.issue_number }}" --repo "${{ github.repository }}" || true
+
+      - name: Handle crash
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          gh issue comment "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --body "⚠️ Conflict-resolve run crashed (attempt ${{ steps.attempt.outputs.n }}). See the [run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}). Will retry on the next deploy."

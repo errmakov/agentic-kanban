@@ -84,8 +84,9 @@ jobs:
               echo "Merged PR #${OPEN_PR} (issue #${ISSUE})"
               MERGED="$MERGED $ISSUE"
             else
-              echo "::warning::Merge failed for #${ISSUE} (conflict?) — left for manual handling"
+              echo "::warning::Merge failed for #${ISSUE} (conflict) — dispatching agent-resolve (stays in Ready to Deploy)"
               FAILED="$FAILED $ISSUE"
+              gh workflow run agent-resolve.yml -f issue_number="$ISSUE" --repo "${{ github.repository }}" || true
             fi
           done < <(jq -c '.[]' ready.json)
 
