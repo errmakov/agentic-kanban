@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { BreakCountdown } from './BreakCountdown';
 
@@ -39,5 +39,17 @@ describe('BreakCountdown', () => {
     vi.setSystemTime(new Date(2026, 5, 1, 23, 0, 0));
     render(<BreakCountdown />);
     expect(screen.getByText(/no more breaks today/i)).toBeInTheDocument();
+  });
+
+  it('ticks down by one second when the interval fires', () => {
+    vi.setSystemTime(new Date(2026, 5, 1, 10, 29, 0));
+    render(<BreakCountdown />);
+    expect(screen.getByText('01:00')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(screen.getByText('00:59')).toBeInTheDocument();
   });
 });
