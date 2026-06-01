@@ -54,11 +54,13 @@ for b in $(git ls-remote --heads origin 'agent/issue-*' | awk '{print $2}' | sed
   git push origin --delete "$b" || true
 done
 
-# 4. Close previous demo issues and remove their board items.
-echo "==> Closing previous demo-backlog issues..."
-CLOSED_NUMS=$(gh issue list --repo "${OWNER}/${REPO}" --label demo-backlog --state open --limit 200 --json number -q '.[].number' || true)
+# 4. Permanently delete previous demo issues (deleting an issue also removes its
+#    board item). --state all also cleans up any closed ones from earlier runs.
+#    Requires repo-admin rights; --yes skips the confirmation prompt.
+echo "==> Deleting previous demo-backlog issues..."
+CLOSED_NUMS=$(gh issue list --repo "${OWNER}/${REPO}" --label demo-backlog --state all --limit 200 --json number -q '.[].number' || true)
 for n in $CLOSED_NUMS; do
-  gh issue close "$n" --repo "${OWNER}/${REPO}" --reason "not planned" 2>/dev/null || true
+  gh issue delete "$n" --repo "${OWNER}/${REPO}" --yes 2>/dev/null || true
 done
 
 if [ -n "$CLOSED_NUMS" ]; then
