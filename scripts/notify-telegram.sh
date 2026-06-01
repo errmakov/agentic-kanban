@@ -9,7 +9,9 @@
 
 set -euo pipefail
 
-MESSAGE="${1:?Usage: notify-telegram.sh <message>}"
+# Interpret backslash escapes (e.g. \n) so callers can pass multi-line messages
+# as a single argument and have Telegram render real newlines.
+MESSAGE=$(printf '%b' "${1:?Usage: notify-telegram.sh <message>}")
 
 if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
   echo "Warning: TELEGRAM_BOT_TOKEN not set, skipping notification" >&2

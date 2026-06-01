@@ -1,126 +1,67 @@
-name: "Review Feedback Handler"
+name: "Human Gate (label-driven)"
 
-# Reacts to PR review events.
-# On approval: moves issue to "Ready to Deploy"
-# On changes requested: moves issue back to "Dev" and re-dispatches agent-dev
+# The human review gate. GitHub forbids approving your own PR, so for a solo
+# operator the gate is a LABEL on the issue, not a PR review:
+#   add `approved`           → release the card to "Ready to Deploy"
+#   add `changes-requested`  → send it back to Dev for rework (agent-dev re-runs)
+# Triggered on issues:labeled and filtered to those two labels, so the agents'
+# own stage:doing/stage:done/blocker churn never trips it.
 
 on:
-  pull_request_review:
-    types: [submitted]
+  issues:
+    types: [labeled]
 
 permissions:
   contents: read
-  pull-requests: read
   issues: write
+  actions: write
 
 env:
   PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
   PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
 
 jobs:
-  handle-review:
-    # Only handle reviews on agent-created PRs
-    if: startsWith(github.event.pull_request.head.ref, 'agent/issue-')
+  gate:
+    if: github.event.label.name == 'approved' || github.event.label.name == 'changes-requested'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract issue number from branch
-        id: extract
-        run: |
-          BRANCH="${{ github.event.pull_request.head.ref }}"
-          ISSUE_NUM=$(echo "$BRANCH" | sed 's/agent\/issue-//')
-          echo "issue_number=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
-          echo "Review state: ${{ github.event.review.state }}"
-          echo "Issue number: $ISSUE_NUM"
-
-      - name: Get project item ID
-        id: item
+      - name: Apply the human decision
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
-          ISSUE_NUM="${{ steps.extract.outputs.issue_number }}"
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          ISSUE="${{ github.event.issue.number }}"
+          DECISION="${{ github.event.label.name }}"
 
-          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" \
-            --owner "$PROJECT_OWNER" \
-            --format json --limit 500 \
-            | jq -r --argjson num "$ISSUE_NUM" \
-              '.items[] | select(.content.number == ($num | tonumber)) | .id')
-
-          echo "item_id=$ITEM_ID" >> "$GITHUB_OUTPUT"
-
-      - name: On Approval — move to Ready to Deploy
-        if: github.event.review.state == 'approved'
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
-        run: |
           chmod +x ./scripts/move-issue.sh
 
-          ITEM_ID="${{ steps.item.outputs.item_id }}"
-          ISSUE_NUM="${{ steps.extract.outputs.issue_number }}"
-
-          if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
-            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Ready to Deploy"
-
-            gh issue comment "$ISSUE_NUM" \
-              --repo "${{ github.repository }}" \
-              --body "✅ **Review approved.** Moving to deployment queue."
-
-            # Remove the review-notified label so dispatcher doesn't re-notify
-            gh issue edit "$ISSUE_NUM" \
-              --repo "${{ github.repository }}" \
-              --remove-label "review-notified" 2>/dev/null || true
+          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --limit 500 \
+            | jq -r --argjson num "$ISSUE" '.items[] | select(.content.number == $num) | .id')
+          if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
+            echo "::warning::#$ISSUE not on the board — nothing to do"; exit 0
           fi
 
-      - name: On Changes Requested — move back to Dev
-        if: github.event.review.state == 'changes_requested'
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
-        run: |
-          chmod +x ./scripts/move-issue.sh
-
-          ITEM_ID="${{ steps.item.outputs.item_id }}"
-          ISSUE_NUM="${{ steps.extract.outputs.issue_number }}"
-
-          if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
+          if [ "$DECISION" = "approved" ]; then
+            echo "::notice::#$ISSUE approved → Ready to Deploy"
+            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Ready to Deploy"
+            gh issue edit "$ISSUE" --repo "$REPO" \
+              --remove-label "approved" --remove-label "review-notified" \
+              --remove-label "stage:doing" --remove-label "stage:done" || true
+            gh issue comment "$ISSUE" --repo "$REPO" \
+              --body "✅ **Approved by human** → moved to Ready to Deploy. It ships on the next batch deploy."
+          else
+            echo "::notice::#$ISSUE changes-requested → back to Dev"
             ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Dev"
-
-            # Rework is in-flight in Dev: mark stage:doing so the dispatcher counts it
-            # toward Dev WIP and doesn't pull additional work on top of it.
-            gh issue edit "$ISSUE_NUM" --repo "${{ github.repository }}" \
-              --add-label "stage:doing" --remove-label "stage:done" || true
-
-            # Extract review comments as context for the dev agent
-            REVIEW_BODY="${{ github.event.review.body }}"
-
-            PR_COMMENTS=$(gh pr view "${{ github.event.pull_request.number }}" \
-              --repo "${{ github.repository }}" \
-              --json reviewDecision,reviews \
-              --jq '.reviews[] | select(.state == "CHANGES_REQUESTED") | .body' \
-              | tail -5)
-
-            RETRY_CONTEXT="Human reviewer requested changes:\n\n${REVIEW_BODY}\n\n${PR_COMMENTS}"
-
-            gh issue comment "$ISSUE_NUM" \
-              --repo "${{ github.repository }}" \
-              --body "$(cat <<EOF
-          🔄 **Changes requested.** Moving back to Dev.
-
-          Reviewer feedback:
-          > ${REVIEW_BODY}
-
-          Re-dispatching development agent with feedback context.
-          EOF
-          )"
-
-            # Re-dispatch agent-dev with review feedback
+            gh issue edit "$ISSUE" --repo "$REPO" \
+              --remove-label "changes-requested" --remove-label "review-notified" \
+              --remove-label "stage:done" --add-label "stage:doing" || true
+            gh issue comment "$ISSUE" --repo "$REPO" \
+              --body "🔄 **Changes requested by human.** Back to Dev — re-dispatching agent-dev with your feedback (see the latest comments)."
             gh workflow run agent-dev.yml \
-              -f issue_number="$ISSUE_NUM" \
-              -f retry_context="$RETRY_CONTEXT" \
-              --repo "${{ github.repository }}"
-
-            # Remove the review-notified label
-            gh issue edit "$ISSUE_NUM" \
-              --repo "${{ github.repository }}" \
-              --remove-label "review-notified" 2>/dev/null || true
+              -f issue_number="$ISSUE" \
+              -f retry_context="Human reviewer requested changes — read the most recent issue comments for the specifics and address them." \
+              --repo "$REPO"
           fi

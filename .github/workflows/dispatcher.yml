@@ -196,6 +196,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           chmod +x ./scripts/notify-telegram.sh
+          REPO="${{ github.repository }}"
 
           jq -c '.[] | select(.status == "Human Review")' board-state.json | while read -r item; do
             ISSUE_NUM=$(echo "$item" | jq -r '.number')
@@ -214,7 +215,7 @@ jobs:
                 --json url -q '.[0].url // "No PR found"')
 
               ./scripts/notify-telegram.sh \
-                "🔍 *Review Needed*: Issue #${ISSUE_NUM}\n\n*${TITLE}*\n\nPR: ${PR_URL}\nIssue: ${{ github.server_url }}/${REPO}/issues/${ISSUE_NUM}"
+                "🔍 *Review Needed* — #${ISSUE_NUM}: *${TITLE}*\nPR: ${PR_URL}\nIssue: ${{ github.server_url }}/${REPO}/issues/${ISSUE_NUM}\n\nApprove → add the \`approved\` label · Changes → add \`changes-requested\`"
 
               gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "review-notified"
             fi
