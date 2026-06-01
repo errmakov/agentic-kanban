@@ -7,9 +7,16 @@ services:
       - "${FACTORYWALL_EXTERNAL_PORT:-3000}:3000"
     env_file:
       - .env.production
+    volumes:
+      # Persists the app's lightweight data store (reactions, votes, …) across
+      # redeploys. The app writes under $DATA_DIR (=/app/data, set in the image).
+      - factorywall-data:/app/data
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 20s
+
+volumes:
+  factorywall-data:

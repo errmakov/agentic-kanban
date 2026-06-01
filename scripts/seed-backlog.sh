@@ -26,14 +26,14 @@ gh label create demo-backlog --repo "${OWNER}/${REPO}" \
 BACKLOG=(
   "Add a dark/light theme toggle|Let visitors switch FactoryWall between a light and a dark theme, and remember the choice."
   "Show a live attendee counter in the header|Display a number in the header representing how many people are viewing the wall."
-  "Add an emoji reaction bar to the wall|Let visitors tap emoji reactions on the wall and see the running counts."
+  "Add an emoji reaction bar to the wall|Let visitors tap emoji reactions on the wall and see the running counts. The counts are shared across visitors and must survive a page reload and a redeploy (persist them server-side)."
   "Add a countdown to the next break|Show a countdown timer to the next scheduled break."
   "Add a now-speaking banner|Show a banner naming the session that is currently on."
   "Show the day's agenda as a list|Display the day's agenda as a simple list of sessions and times."
   "Add speaker bio cards|Show a few speaker bio cards with name, role and a short bio."
   "Add a share-this-session button|Add a button that copies the current page link to the clipboard."
   "Add an FAQ accordion|Add a short FAQ section where each question expands to reveal its answer."
-  "Add a thumbs up/down feedback widget|Let visitors leave a quick thumbs up or thumbs down on the session."
+  "Add a thumbs up/down feedback widget|Let visitors leave a quick thumbs up or thumbs down on the session. Keep a running tally that persists across reloads and redeploys (store it server-side)."
   "Add a footer with a venue map link|Add a footer link that points to the venue map."
   "Add a jump-to-top button|Add a button that scrolls the page back to the top."
 )

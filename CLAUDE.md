@@ -17,8 +17,12 @@ Because features are demoed live, keep every change **small, visible, and self-c
 - **Framework**: Next.js 16 (App Router)
 - **Language**: TypeScript (strict mode)
 - **Styling**: Tailwind CSS
-- **State**: client-side React state, or at most a single trivial `app/api/*` route.
-  **There is no database.** Do not add Prisma, Postgres, or any persistence layer.
+- **State**: client-side React state, or a small `app/api/*` route. For state that must
+  **survive a reload or redeploy** (reaction counts, votes, tallies), persist a **JSON
+  file under `process.env.DATA_DIR`** (a mounted volume in prod; fall back to `./data`
+  in dev) read/written via a tiny `app/api/*` route. **No external database server or
+  ORM** (no Postgres/Prisma/MySQL); `sqlite` via a small lib is acceptable only if a
+  JSON file genuinely won't do. Create the dir if missing (`fs.mkdir(..., {recursive:true})`).
 - **Testing**: Vitest (unit, jsdom) + Playwright (e2e)
 - **Package Manager**: npm
 - **Node Version**: 22
@@ -101,6 +105,6 @@ When working as an automated agent:
 3. Put new UI in its own component under `components/` and wire it into `app/page.tsx`.
 4. **Add a Vitest unit test** for any new component (see `components/Wall.test.tsx` for the pattern).
 5. Run `npm run typecheck` and `npm run build` before finishing; fix what you broke.
-6. **No database, no new heavy dependencies.** Prefer the platform and a few lines of code.
+6. **No external DB server/ORM, no new heavy dependencies.** Lightweight persistence is fine: a JSON file under `process.env.DATA_DIR`. Prefer the platform and a few lines of code.
 7. **Never commit secrets or `.env` files.**
 8. Keep diffs minimal and match the surrounding style.
