@@ -79,12 +79,54 @@ jobs:
           move() { ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$1" "$2" >/dev/null; }
           count_status() { jq -r --arg s "$1" '[.[] | select(.status==$s)] | length' board-state.json; }
 
-          # ---------- 1. Blockers present? Stop the line, swarm. ----------
+          # ---------- 0. Human resume: `retry` cards re-enter their silo ----------
+          # A human cleared a needs-human card and tagged it `retry`. Re-dispatch the
+          # agent for its CURRENT silo (no backward move), drop a resume marker so the
+          # swarm counter resets, then defer normal pulls to the next tick.
+          mapfile -t RETRY < <(jq -c '.[] | select(.labels | index("retry"))' board-state.json)
+          if [ "${#RETRY[@]}" -gt 0 ]; then
+            for item in "${RETRY[@]}"; do
+              NUM=$(echo "$item" | jq -r '.number')
+              ST=$(echo "$item" | jq -r '.status')
+              case "$ST" in
+                "SA/BA") AGENT="agent-saba.yml" ;;
+                "Dev")   AGENT="agent-dev.yml" ;;
+                "Test")  AGENT="agent-fix.yml" ;;
+                *)       AGENT="" ;;
+              esac
+              if [ -z "$AGENT" ]; then
+                echo "::warning::#$NUM has retry in silo '$ST' (no agent runs there) — clearing the flag"
+                [ "$DRY_RUN" != "true" ] && relabel "$NUM" "-" "retry"
+                continue
+              fi
+              echo "::notice::RESUME #$NUM in $ST → $AGENT"
+              if [ "$DRY_RUN" != "true" ]; then
+                gh issue edit "$NUM" --repo "$REPO" \
+                  --remove-label "retry" --remove-label "blocker" --remove-label "needs-human" \
+                  --add-label "stage:doing" >/dev/null 2>&1 || true
+                gh issue comment "$NUM" --repo "$REPO" \
+                  --body "▶️ Resumed by human — re-dispatching \`${AGENT%.yml}\` in **$ST**. Swarm attempts reset." >/dev/null 2>&1 || true
+                gh workflow run "$AGENT" -f issue_number="$NUM" --repo "$REPO"
+              fi
+            done
+            echo "Handled human resume(s); deferring normal pulls to the next tick."
+            exit 0
+          fi
+
+          # ---------- 1. Blockers present? Stop the line. Swarm the fresh ones. ----------
+          # ANY `blocker` halts new pulls (stop starting, start finishing). We swarm a
+          # blocker only if it's not already in flight (stage:doing) and hasn't been
+          # escalated to a human (needs-human) — escalated cards wait for a person and
+          # keep the line stopped, but must NOT be re-swarmed (that would loop forever).
           mapfile -t BLOCKED < <(jq -c '.[] | select(.labels | index("blocker"))' board-state.json)
           if [ "${#BLOCKED[@]}" -gt 0 ]; then
-            echo "::warning::${#BLOCKED[@]} blocker(s) present — halting NEW pulls, swarming existing work."
+            echo "::warning::${#BLOCKED[@]} blocker(s) present — halting NEW pulls."
             for item in "${BLOCKED[@]}"; do
               NUM=$(echo "$item" | jq -r '.number')
+              if echo "$item" | jq -e '.labels | index("needs-human")' >/dev/null 2>&1; then
+                echo "  #$NUM awaiting a human (needs-human) — line stays stopped, not re-swarming"
+                continue
+              fi
               if echo "$item" | jq -e '.labels | index("stage:doing")' >/dev/null 2>&1; then
                 echo "  #$NUM already being swarmed (stage:doing) — skip"
                 continue

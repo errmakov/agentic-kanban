@@ -70,7 +70,13 @@ Agents do **not** push work downstream — the **dispatcher** is the single move
   (right-to-left, one hop per tick). Agents self-kick the dispatcher when they finish.
 - Test is the rightmost value-add silo, so on success it **pushes** to `Human Review`.
 - A failing test raises a `blocker`: new pulls stop and `agent-fix` swarms the card
-  **in place** (cap 3 attempts, then `needs-human`). Cards never move backward.
+  **in place** (cap 3 attempts, then `needs-human`). Cards never move backward, and a
+  broken card is never pushed to Human Review (only Test pushes, only on success).
+- A `needs-human` card keeps `blocker` and stays in its silo — the line stays stopped.
+  A human writes guidance and/or pushes a fix to `agent/issue-<N>`, then runs
+  `scripts/resume-issue.sh <repo> <issue>` (or swaps labels in the UI) to clear the
+  flags and tag `retry`; the dispatcher re-dispatches the silo's agent with a fresh
+  attempt budget.
 
 As a feature agent you don't touch any of this — implement the issue and let the
 pipeline carry the card.

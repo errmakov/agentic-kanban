@@ -58,9 +58,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
-          PRIOR=$(gh issue view "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --json comments -q "[.comments[] | select(.body | contains(\"${FIX_MARKER}\"))] | length")
-          ATTEMPT=$(( PRIOR + 1 ))
+          # Count fix attempts only SINCE the most recent human resume marker, so a
+          # human rescue gives a fresh MAX_FIX attempts instead of instantly re-escalating.
+          ATTEMPT=$(gh issue view "${{ inputs.issue_number }}" --repo "${{ github.repository }}" --json comments \
+            | jq --arg fix "$FIX_MARKER" --arg res "Resumed by human" '
+                [.comments[].body] as $b
+                | ([ range(0; ($b|length)) | select($b[.] | contains($res)) ] | last) as $r
+                | (($r // -1) + 1) as $start
+                | ([ $b[$start:][] | select(contains($fix)) ] | length) + 1
+              ')
           echo "attempt=$ATTEMPT" >> "$GITHUB_OUTPUT"
           echo "Swarm attempt $ATTEMPT of $MAX_FIX"
 
@@ -72,25 +78,21 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          chmod +x ./scripts/move-issue.sh ./scripts/notify-telegram.sh
+          chmod +x ./scripts/notify-telegram.sh
 
+          # Swarm gave up. Flag for a human IN PLACE — the card does NOT move. Only
+          # Test pushes forward, and only on success; a broken card never gets pushed
+          # to Human Review (that would force a forbidden backward move later).
+          # It keeps `blocker`, so the line stays stopped until a human resolves it.
           gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
             --add-label "needs-human" --remove-label "stage:doing" || true
 
           gh issue comment "${{ inputs.issue_number }}" \
             --repo "${{ github.repository }}" \
-            --body "🆘 **Swarm exhausted after ${MAX_FIX} attempts.** Routing to Human Review for manual help. Card keeps its \`blocker\`/\`needs-human\` flags."
-
-          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --limit 500 \
-            | jq -r --argjson num "${{ inputs.issue_number }}" '.items[] | select(.content.number == $num) | .id')
-          if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
-            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Human Review"
-          fi
+            --body "🆘 **Swarm exhausted after ${MAX_FIX} attempts.** Card stays put with \`blocker\` + \`needs-human\` — the line is stopped until a human steps in and resumes it."
 
           ./scripts/notify-telegram.sh \
-            "🆘 Swarm exhausted on issue #${{ inputs.issue_number }} after ${MAX_FIX} attempts. Needs a human."
-
-          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
+            "🆘 Swarm exhausted on issue #${{ inputs.issue_number }} after ${MAX_FIX} attempts. Needs a human (line stopped)."
 
       - name: Stop if escalated
         if: ${{ fromJSON(steps.attempt.outputs.attempt) > fromJSON(env.MAX_FIX) }}
@@ -198,9 +200,10 @@ jobs:
             --repo "${{ github.repository }}" \
             --body "🔁 Swarm attempt ${{ steps.attempt.outputs.attempt }} did not pass. Keeping \`blocker\`; the dispatcher will swarm again."
 
-          # Drop the in-flight marker so the dispatcher re-dispatches us next tick.
+          # Re-assert blocker (a human resume may have cleared it) and drop the in-flight
+          # marker so the dispatcher re-dispatches us next tick.
           gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --remove-label "stage:doing" || true
+            --add-label "blocker" --remove-label "stage:doing" || true
 
           gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
 
@@ -209,8 +212,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
-          # Crash mid-swarm: release the in-flight marker (keep blocker) so the next
-          # tick retries; the attempt counter already advanced, so MAX_FIX still bounds it.
+          # Crash mid-swarm: re-assert blocker and release the in-flight marker so the
+          # next tick retries; the attempt counter already advanced, so MAX_FIX bounds it.
           gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --remove-label "stage:doing" || true
+            --add-label "blocker" --remove-label "stage:doing" || true
           gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
