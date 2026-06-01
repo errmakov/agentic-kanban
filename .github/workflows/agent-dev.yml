@@ -35,6 +35,14 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.PROJECT_PAT }}
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
       - name: Gather full context
         id: context
         env:
@@ -93,7 +101,7 @@ jobs:
 
           claude -p "$FULL_PROMPT" \
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm install *),Bash(npm run build),Bash(npm run lint),Bash(npm run typecheck),Bash(npm run test),Bash(git diff *),Bash(git status)" \
-            --model claude-opus-4-6 \
+            --model claude-opus-4-8 \
             --max-turns 30
 
       - name: Verify build passes
@@ -176,7 +184,7 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
           BRANCH="${{ steps.branch.outputs.branch }}"
-          DIFF_STAT=$(git diff --stat origin/main..."$BRANCH" 2>/dev/null | tail -1)
+          DIFF_STAT=$(git diff --stat origin/master..."$BRANCH" 2>/dev/null | tail -1)
 
           gh issue comment "${{ inputs.issue_number }}" \
             --repo "${{ github.repository }}" \

@@ -96,19 +96,7 @@ jobs:
             fi
           done
 
-      - name: Dispatch deploy for "Ready to Deploy" items
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
-        run: |
-          jq -c '.[] | select(.status == "Ready to Deploy")' board-state.json | while read -r item; do
-            ISSUE_NUM=$(echo "$item" | jq -r '.number')
-            TITLE=$(echo "$item" | jq -r '.title')
-
-            echo "::notice::Dispatching deploy for issue #${ISSUE_NUM}: ${TITLE}"
-
-            if [ "${{ inputs.dry_run }}" != "true" ]; then
-              gh workflow run agent-deploy.yml \
-                -f issue_number="$ISSUE_NUM" \
-                --repo "${{ github.repository }}"
-            fi
-          done
+      # NOTE: Deployment is intentionally NOT dispatched here.
+      # Deploy is a separate, hand-kicked batch workflow (agent-deploy.yml) that
+      # merges and ships everything sitting in "Ready to Deploy" at once. This keeps
+      # the human firmly in control of when work goes to production.

@@ -43,6 +43,9 @@ jobs:
           node-version: 22
           cache: 'npm'
 
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
       - name: Install dependencies
         run: npm ci
 
@@ -90,7 +93,7 @@ jobs:
           PROMPT
           )" \
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm run test *),Bash(npm test *),Bash(npx vitest *),Bash(npx playwright *),Bash(npm run test:e2e *),Bash(npm run lint),Bash(npm run typecheck),Bash(git diff *),Bash(git status)" \
-            --model claude-sonnet-4-5-20250929 \
+            --model claude-sonnet-4-6 \
             --max-turns 25
 
       - name: Run test suite — verify
@@ -134,7 +137,7 @@ jobs:
           PROMPT
           )" \
               --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm run test *),Bash(npm test *),Bash(npx vitest *),Bash(npm run lint),Bash(git diff *)" \
-              --model claude-sonnet-4-5-20250929 \
+              --model claude-sonnet-4-6 \
               --max-turns 15
 
             # Re-run tests

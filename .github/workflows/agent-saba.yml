@@ -28,6 +28,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
       - name: Gather issue context
         id: context
         env:
@@ -60,7 +68,7 @@ jobs:
           PROMPT
           )" \
             --allowedTools "Read,Glob,Grep" \
-            --model claude-sonnet-4-5-20250929 \
+            --model claude-sonnet-4-6 \
             --max-turns 20 \
             --output-format json \
           | jq -r '.result' > /tmp/analysis-result.md
