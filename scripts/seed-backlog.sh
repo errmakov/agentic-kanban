@@ -9,14 +9,34 @@
 # NOTE: Each card is a one-line human request. Acceptance criteria are intentionally
 # NOT written here — producing them is the SA/BA agent's job (the first pipeline stage).
 # Every issue is labelled `demo-backlog` so reset-rehearsal.sh can find and clear them.
+#
+# Resilient by design: GitHub's burst/secondary rate limit can throttle a tight
+# create-loop, so each gh call retries with backoff, we pause between cards, and a
+# single failure logs + continues instead of aborting the whole batch (NOT set -e).
 
-set -euo pipefail
+set -uo pipefail
 
 OWNER="${1:?Usage: seed-backlog.sh <owner> <repo> <project_number>}"
 REPO="${2:?Usage: seed-backlog.sh <owner> <repo> <project_number>}"
 PROJECT="${3:?Usage: seed-backlog.sh <owner> <repo> <project_number>}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# retry <max> <initial_delay_s> -- <cmd...> : run cmd, retrying with exponential
+# backoff on failure (especially GitHub rate limits). Prints stdout on success.
+retry() {
+  local max="$1" delay="$2"; shift 2
+  local i out
+  for ((i = 1; i <= max; i++)); do
+    if out=$("$@" 2>/tmp/seed-err.txt); then printf '%s' "$out"; return 0; fi
+    if grep -qiE 'rate limit|secondary|too quickly|abuse|timeout|try again' /tmp/seed-err.txt; then
+      echo "    rate-limited/transient — retry ${i}/${max} in ${delay}s" >&2
+    fi
+    sleep "$delay"; delay=$((delay * 2))
+  done
+  cat /tmp/seed-err.txt >&2
+  return 1
+}
 
 # Ensure the tracking label exists (idempotent).
 gh label create demo-backlog --repo "${OWNER}/${REPO}" \
@@ -41,19 +61,42 @@ BACKLOG=(
 echo "Seeding ${#BACKLOG[@]} backlog issues into ${OWNER}/${REPO} (project ${PROJECT})..."
 chmod +x "${SCRIPT_DIR}/move-issue.sh"
 
+SEEDED=0
+FAILED=""
 for entry in "${BACKLOG[@]}"; do
   TITLE="${entry%%|*}"
   BODY="${entry#*|}"
 
-  ISSUE_URL=$(gh issue create --repo "${OWNER}/${REPO}" --title "$TITLE" --body "$BODY" --label demo-backlog)
+  ISSUE_URL=$(retry 6 3 gh issue create --repo "${OWNER}/${REPO}" --title "$TITLE" --body "$BODY" --label demo-backlog)
+  if [ -z "$ISSUE_URL" ]; then
+    echo "  ::FAILED to create: ${TITLE}"
+    FAILED="${FAILED} \"${TITLE}\""
+    sleep 1
+    continue
+  fi
   echo "Created: $ISSUE_URL"
+  NUM=$(echo "$ISSUE_URL" | grep -oE '[0-9]+$')
 
-  ITEM_ID=$(gh project item-add "$PROJECT" --owner "$OWNER" --url "$ISSUE_URL" --format json | jq -r '.id')
+  # Add to the project. The repo may be linked (auto-adds issues), so item-add can
+  # report "already exists" — in that case just look the item up instead of failing.
+  ITEM_ID=$(gh project item-add "$PROJECT" --owner "$OWNER" --url "$ISSUE_URL" --format json 2>/tmp/seed-err.txt | jq -r '.id' 2>/dev/null || true)
+  if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
+    ITEM_ID=$(retry 6 3 gh project item-list "$PROJECT" --owner "$OWNER" --format json --limit 500 \
+      | jq -r --argjson n "$NUM" '.items[] | select(.content.number == $n) | .id')
+  fi
 
   if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
-    "${SCRIPT_DIR}/move-issue.sh" "$OWNER" "$PROJECT" "$ITEM_ID" "Todo" \
-      || echo "  (could not set status to Todo automatically; set it in the board UI)"
+    "${SCRIPT_DIR}/move-issue.sh" "$OWNER" "$PROJECT" "$ITEM_ID" "Todo" >/dev/null \
+      && SEEDED=$((SEEDED + 1)) \
+      || echo "  (could not set #${NUM} to Todo automatically; set it in the board UI)"
+  else
+    echo "  (could not add #${NUM} to the board automatically; add it in the UI)"
   fi
+
+  sleep 1   # gentle throttle so the create-loop doesn't trip the burst limit
 done
 
-echo "Done. Open the board — all cards should be in Todo."
+echo ""
+echo "Done. ${SEEDED}/${#BACKLOG[@]} cards in Todo."
+[ -n "$FAILED" ] && echo "Not created (re-run the seed):${FAILED}"
+exit 0
