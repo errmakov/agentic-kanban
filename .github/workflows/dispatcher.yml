@@ -1,11 +1,23 @@
 name: Dispatcher
 
-# Polls the GitHub Project board every 5 minutes.
-# Detects issues that need agent attention and dispatches the right workflow.
+# The heartbeat of the pull system. The dispatcher is the SOLE mover of cards
+# and the SOLE dispatcher of agents. Agents no longer push work downstream — they
+# finish their silo, mark the card `stage:done`, and stop. This dispatcher then
+# PULLS `stage:done` cards into the next silo only when that silo is under its WIP
+# limit. Right-to-left, one hop per tick, so freed capacity cascades upstream.
+#
+# Triggers:
+#   - workflow_dispatch : hand-kick a single tick on stage (full control), or
+#   - self-kick         : each agent runs this workflow when it finishes, so flow
+#                         propagates immediately without waiting on a slow cron.
+# (GitHub `schedule:` has a 5-min floor — too slow for a live tick — so we drive
+#  cadence by self-kick instead. A cron heartbeat can be enabled below if wanted.)
+#
+# A `concurrency` group serialises ticks so two overlapping runs can't over-pull.
 
 on:
   # schedule:
-  #   - cron: '*/5 * * * *'
+  #   - cron: '*/5 * * * *'   # optional safety heartbeat (5-min floor)
   workflow_dispatch:
     inputs:
       dry_run:
@@ -13,53 +25,127 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: dispatcher
+  cancel-in-progress: false
+
 permissions:
   contents: read
-  issues: read
+  issues: write
   actions: write
 
 env:
   PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
   PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
+  # WIP limits per silo (whole-silo: stage:doing + stage:done count together).
+  # Set as repo variables; the dispatcher is the enforcement point (GitHub's own
+  # column limits are only advisory). Edit these live to demo throughput changes.
+  WIP_SABA: ${{ vars.WIP_SABA || '2' }}
+  WIP_DEV: ${{ vars.WIP_DEV || '1' }}
+  WIP_TEST: ${{ vars.WIP_TEST || '2' }}
+  DRY_RUN: ${{ inputs.dry_run }}
 
 jobs:
-  poll-and-dispatch:
+  tick:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Poll project board
-        id: poll
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
           chmod +x ./scripts/poll-board.sh
           ./scripts/poll-board.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" > board-state.json
-          cat board-state.json
+          echo "--- board state ---"
+          jq -r '.[] | "  #\(.number) [\(.status)] {\(.labels | join(","))}"' board-state.json || cat board-state.json
 
-      - name: Dispatch agents for "Ready for Work" items
+      - name: Orchestrate — blocker swarm + WIP-gated pulls
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+
           chmod +x ./scripts/move-issue.sh
 
-          jq -c '.[] | select(.status == "Ready for Work")' board-state.json | while read -r item; do
-            ISSUE_NUM=$(echo "$item" | jq -r '.number')
-            ITEM_ID=$(echo "$item" | jq -r '.item_id')
-            TITLE=$(echo "$item" | jq -r '.title')
+          relabel() {  # <issue> <add|-> <remove|->
+            local args=()
+            [ "$2" != "-" ] && args+=(--add-label "$2")
+            [ "$3" != "-" ] && args+=(--remove-label "$3")
+            [ ${#args[@]} -eq 0 ] && return 0
+            gh issue edit "$1" --repo "$REPO" "${args[@]}" >/dev/null 2>&1 || true
+          }
+          move() { ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$1" "$2" >/dev/null; }
+          count_status() { jq -r --arg s "$1" '[.[] | select(.status==$s)] | length' board-state.json; }
 
-            echo "::notice::Dispatching SA/BA for issue #${ISSUE_NUM}: ${TITLE}"
+          # ---------- 1. Blockers present? Stop the line, swarm. ----------
+          mapfile -t BLOCKED < <(jq -c '.[] | select(.labels | index("blocker"))' board-state.json)
+          if [ "${#BLOCKED[@]}" -gt 0 ]; then
+            echo "::warning::${#BLOCKED[@]} blocker(s) present — halting NEW pulls, swarming existing work."
+            for item in "${BLOCKED[@]}"; do
+              NUM=$(echo "$item" | jq -r '.number')
+              if echo "$item" | jq -e '.labels | index("stage:doing")' >/dev/null 2>&1; then
+                echo "  #$NUM already being swarmed (stage:doing) — skip"
+                continue
+              fi
+              echo "::notice::Swarming blocker on #$NUM → agent-fix"
+              if [ "$DRY_RUN" != "true" ]; then
+                relabel "$NUM" "stage:doing" "-"
+                gh workflow run agent-fix.yml -f issue_number="$NUM" --repo "$REPO"
+              fi
+            done
+            echo "Skipping pulls while blocked (stop starting, start finishing)."
+          else
+            # ---------- 2. Pull right-to-left, one hop/tick, WIP-gated. ----------
+            # Live counters so capacity freed downstream cascades upstream this tick.
+            test_n=$(count_status "Test")
+            dev_n=$(count_status "Dev")
+            saba_n=$(count_status "SA/BA")
+            echo "WIP now → SA/BA:$saba_n/$WIP_SABA  Dev:$dev_n/$WIP_DEV  Test:$test_n/$WIP_TEST"
 
-            if [ "${{ inputs.dry_run }}" != "true" ]; then
-              # Move to SA/BA
-              ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "SA/BA"
+            # 2a. Test ← Dev (pull Dev cards that are stage:done and not in-flight)
+            mapfile -t C < <(jq -c '.[] | select(.status=="Dev" and (.labels|index("stage:done")) and ((.labels|index("stage:doing"))|not))' board-state.json)
+            for item in "${C[@]}"; do
+              [ "$test_n" -lt "$WIP_TEST" ] || { echo "Test at WIP ($WIP_TEST) — no more Dev→Test pulls"; break; }
+              NUM=$(echo "$item" | jq -r '.number'); ID=$(echo "$item" | jq -r '.item_id')
+              echo "::notice::PULL #$NUM  Dev → Test"
+              if [ "$DRY_RUN" != "true" ]; then
+                move "$ID" "Test"
+                relabel "$NUM" "stage:doing" "stage:done"
+                gh workflow run agent-test.yml -f issue_number="$NUM" --repo "$REPO"
+              fi
+              test_n=$((test_n+1)); dev_n=$((dev_n-1))
+            done
 
-              # Dispatch SA/BA agent
-              gh workflow run agent-saba.yml \
-                -f issue_number="$ISSUE_NUM" \
-                --repo "${{ github.repository }}"
-            fi
-          done
+            # 2b. Dev ← SA/BA
+            mapfile -t C < <(jq -c '.[] | select(.status=="SA/BA" and (.labels|index("stage:done")) and ((.labels|index("stage:doing"))|not))' board-state.json)
+            for item in "${C[@]}"; do
+              [ "$dev_n" -lt "$WIP_DEV" ] || { echo "Dev at WIP ($WIP_DEV) — no more SA/BA→Dev pulls"; break; }
+              NUM=$(echo "$item" | jq -r '.number'); ID=$(echo "$item" | jq -r '.item_id')
+              echo "::notice::PULL #$NUM  SA/BA → Dev"
+              if [ "$DRY_RUN" != "true" ]; then
+                move "$ID" "Dev"
+                relabel "$NUM" "stage:doing" "stage:done"
+                gh workflow run agent-dev.yml -f issue_number="$NUM" --repo "$REPO"
+              fi
+              dev_n=$((dev_n+1)); saba_n=$((saba_n-1))
+            done
+
+            # 2c. SA/BA ← Ready for Work (the committed queue; humans pull Todo→here)
+            mapfile -t C < <(jq -c '.[] | select(.status=="Ready for Work")' board-state.json)
+            for item in "${C[@]}"; do
+              [ "$saba_n" -lt "$WIP_SABA" ] || { echo "SA/BA at WIP ($WIP_SABA) — no more Ready for Work→SA/BA pulls"; break; }
+              NUM=$(echo "$item" | jq -r '.number'); ID=$(echo "$item" | jq -r '.item_id')
+              echo "::notice::PULL #$NUM  Ready for Work → SA/BA"
+              if [ "$DRY_RUN" != "true" ]; then
+                move "$ID" "SA/BA"
+                relabel "$NUM" "stage:doing" "-"
+                gh workflow run agent-saba.yml -f issue_number="$NUM" --repo "$REPO"
+              fi
+              saba_n=$((saba_n+1))
+            done
+          fi
 
       - name: Notify for "Human Review" items
         env:
@@ -73,30 +159,25 @@ jobs:
             ISSUE_NUM=$(echo "$item" | jq -r '.number')
             TITLE=$(echo "$item" | jq -r '.title')
 
-            # Check if we already notified (avoid spam on every poll)
-            LABELS=$(gh issue view "$ISSUE_NUM" --repo "${{ github.repository }}" --json labels -q '.labels[].name')
-            if echo "$LABELS" | grep -q "review-notified"; then
+            if echo "$item" | jq -e '.labels | index("review-notified")' >/dev/null 2>&1; then
               echo "Already notified for #${ISSUE_NUM}, skipping"
               continue
             fi
 
             echo "::notice::Sending review notification for issue #${ISSUE_NUM}"
 
-            if [ "${{ inputs.dry_run }}" != "true" ]; then
-              # Find the PR linked to this issue
-              PR_URL=$(gh pr list --repo "${{ github.repository }}" \
+            if [ "$DRY_RUN" != "true" ]; then
+              PR_URL=$(gh pr list --repo "$REPO" \
                 --search "head:agent/issue-${ISSUE_NUM}" \
                 --json url -q '.[0].url // "No PR found"')
 
               ./scripts/notify-telegram.sh \
-                "🔍 *Review Needed*: Issue #${ISSUE_NUM}\n\n*${TITLE}*\n\nPR: ${PR_URL}\nIssue: ${{ github.server_url }}/${{ github.repository }}/issues/${ISSUE_NUM}"
+                "🔍 *Review Needed*: Issue #${ISSUE_NUM}\n\n*${TITLE}*\n\nPR: ${PR_URL}\nIssue: ${{ github.server_url }}/${REPO}/issues/${ISSUE_NUM}"
 
-              # Mark as notified to avoid duplicate notifications
-              gh issue edit "$ISSUE_NUM" --repo "${{ github.repository }}" --add-label "review-notified"
+              gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "review-notified"
             fi
           done
 
-      # NOTE: Deployment is intentionally NOT dispatched here.
-      # Deploy is a separate, hand-kicked batch workflow (agent-deploy.yml) that
-      # merges and ships everything sitting in "Ready to Deploy" at once. This keeps
-      # the human firmly in control of when work goes to production.
+      # NOTE: Deployment is intentionally NOT dispatched here. Deploy is a separate,
+      # hand-kicked batch workflow (agent-deploy.yml) that merges and ships everything
+      # sitting in "Ready to Deploy" at once — the human controls when prod changes.

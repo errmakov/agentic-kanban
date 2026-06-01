@@ -14,7 +14,7 @@ Because features are demoed live, keep every change **small, visible, and self-c
 
 ## Tech Stack
 
-- **Framework**: Next.js 15 (App Router)
+- **Framework**: Next.js 16 (App Router)
 - **Language**: TypeScript (strict mode)
 - **Styling**: Tailwind CSS
 - **State**: client-side React state, or at most a single trivial `app/api/*` route.
@@ -55,6 +55,25 @@ e2e/                  # Playwright specs
 New features are **additive**: add a new component under `components/`, render it from
 `app/page.tsx` (usually inside `<Wall />` or the header/footer), and keep it isolated so
 parallel features don't collide.
+
+## Pipeline (pull system)
+
+This repo ships work through a Kanban **pull system** on a GitHub Project board.
+Agents do **not** push work downstream — the **dispatcher** is the single mover.
+
+- Silos: `Ready for Work` → `SA/BA` → `Dev` → `Test` → `Human Review` → `Ready to Deploy` → `Done`.
+- Each silo except Test has two sub-states via labels: `stage:doing` (an agent is on it)
+  and `stage:done` (finished, waiting in the buffer). WIP limits (`WIP_SABA` / `WIP_DEV` /
+  `WIP_TEST` repo variables) apply to the **whole silo** (doing + done together).
+- An agent finishes by setting `stage:done` and stopping. The dispatcher pulls a
+  `stage:done` card into the next silo only when that silo is under its WIP limit
+  (right-to-left, one hop per tick). Agents self-kick the dispatcher when they finish.
+- Test is the rightmost value-add silo, so on success it **pushes** to `Human Review`.
+- A failing test raises a `blocker`: new pulls stop and `agent-fix` swarms the card
+  **in place** (cap 3 attempts, then `needs-human`). Cards never move backward.
+
+As a feature agent you don't touch any of this — implement the issue and let the
+pipeline carry the card.
 
 ## Coding Conventions
 

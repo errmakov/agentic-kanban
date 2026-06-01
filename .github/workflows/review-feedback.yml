@@ -85,6 +85,11 @@ jobs:
           if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
             ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Dev"
 
+            # Rework is in-flight in Dev: mark stage:doing so the dispatcher counts it
+            # toward Dev WIP and doesn't pull additional work on top of it.
+            gh issue edit "$ISSUE_NUM" --repo "${{ github.repository }}" \
+              --add-label "stage:doing" --remove-label "stage:done" || true
+
             # Extract review comments as context for the dev agent
             REVIEW_BODY="${{ github.event.review.body }}"
 

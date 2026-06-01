@@ -17,7 +17,10 @@ ITEMS_JSON=$(gh project item-list "$PROJECT_NUMBER" \
   --format json \
   --limit 500)
 
-# Transform into a simpler format: [{status, number, title, item_id, type}]
+# Transform into a simpler format: [{status, number, title, item_id, type, labels}]
+# labels: the issue's label names — the dispatcher uses these for WIP sub-states
+# (stage:doing / stage:done), blocker detection, and the swarm. gh exposes Labels
+# as a project field; normalise whether it comes back as strings or {name} objects.
 echo "$ITEMS_JSON" | jq '[
   .items[]
   | select(.content.number != null)
@@ -26,6 +29,7 @@ echo "$ITEMS_JSON" | jq '[
       number: .content.number,
       title: .content.title,
       item_id: .id,
-      type: .content.type
+      type: .content.type,
+      labels: ((.labels // []) | map(if type == "object" then .name else . end))
     }
 ]'

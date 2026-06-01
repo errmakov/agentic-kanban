@@ -94,30 +94,17 @@ jobs:
             --repo "${{ github.repository }}" \
             --body-file /tmp/comment-body.md
 
-      - name: Move to Dev and dispatch agent-dev
+      - name: Mark SA/BA done (await pull) + kick dispatcher
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
-          chmod +x ./scripts/move-issue.sh
+          # Pull system: do NOT push to Dev. Mark this card done-in-silo and stop.
+          # The dispatcher pulls it into Dev only when Dev is under its WIP limit.
+          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --add-label "stage:done" --remove-label "stage:doing" || true
 
-          # Get item ID for this issue
-          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" \
-            --owner "$PROJECT_OWNER" \
-            --format json --limit 500 \
-            | jq -r --argjson num "${{ inputs.issue_number }}" \
-              '.items[] | select(.content.number == $num) | .id')
-
-          if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
-            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Dev"
-
-            # Dispatch development agent
-            gh workflow run agent-dev.yml \
-              -f issue_number="${{ inputs.issue_number }}" \
-              --repo "${{ github.repository }}"
-          else
-            echo "::error::Could not find project item for issue #${{ inputs.issue_number }}"
-            exit 1
-          fi
+          # Nudge the dispatcher to run a tick now so flow propagates immediately.
+          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
 
       - name: Handle failure
         if: failure()
@@ -127,6 +114,11 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           chmod +x ./scripts/notify-telegram.sh
+
+          # Hard agent failure → flag for a human (no auto-swarm for analysis) and
+          # clear the in-flight marker so the card isn't stuck counting against WIP.
+          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --add-label "blocker" --add-label "needs-human" --remove-label "stage:doing" || true
 
           gh issue comment "${{ inputs.issue_number }}" \
             --repo "${{ github.repository }}" \

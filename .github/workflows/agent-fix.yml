@@ -1,0 +1,216 @@
+name: "Agent: Fix (blocker swarm)"
+
+# The "swarm". Dispatched by the dispatcher on a card flagged `blocker` (e.g. tests
+# failing in Test). It fixes the code in place — the card never moves backward — and
+# re-runs the suite:
+#   green → clear `blocker`, push to Human Review.
+#   red   → keep `blocker`, drop `stage:doing` so the dispatcher re-dispatches us next
+#           tick, up to MAX_FIX attempts; then escalate to a human (`needs-human`).
+# The attempt counter is derived from prior fix comments on the issue, and is bumped
+# BEFORE doing work so a crash still counts (no infinite swarm).
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to swarm'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+env:
+  PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+  PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
+  MAX_FIX: 3
+  FIX_MARKER: "Swarm fix — attempt"
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PROJECT_PAT }}
+          ref: "agent/issue-${{ inputs.issue_number }}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Determine attempt number
+        id: attempt
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          PRIOR=$(gh issue view "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --json comments -q "[.comments[] | select(.body | contains(\"${FIX_MARKER}\"))] | length")
+          ATTEMPT=$(( PRIOR + 1 ))
+          echo "attempt=$ATTEMPT" >> "$GITHUB_OUTPUT"
+          echo "Swarm attempt $ATTEMPT of $MAX_FIX"
+
+      # ---------- Escalate if the swarm is exhausted ----------
+      - name: Escalate to human (attempts exhausted)
+        if: ${{ fromJSON(steps.attempt.outputs.attempt) > fromJSON(env.MAX_FIX) }}
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          chmod +x ./scripts/move-issue.sh ./scripts/notify-telegram.sh
+
+          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --add-label "needs-human" --remove-label "stage:doing" || true
+
+          gh issue comment "${{ inputs.issue_number }}" \
+            --repo "${{ github.repository }}" \
+            --body "🆘 **Swarm exhausted after ${MAX_FIX} attempts.** Routing to Human Review for manual help. Card keeps its \`blocker\`/\`needs-human\` flags."
+
+          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --limit 500 \
+            | jq -r --argjson num "${{ inputs.issue_number }}" '.items[] | select(.content.number == $num) | .id')
+          if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
+            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Human Review"
+          fi
+
+          ./scripts/notify-telegram.sh \
+            "🆘 Swarm exhausted on issue #${{ inputs.issue_number }} after ${MAX_FIX} attempts. Needs a human."
+
+          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
+
+      - name: Stop if escalated
+        if: ${{ fromJSON(steps.attempt.outputs.attempt) > fromJSON(env.MAX_FIX) }}
+        run: |
+          echo "Escalated — nothing more for the swarm to do."
+          exit 0
+
+      # ---------- Record the attempt (before work, so crashes still count) ----------
+      - name: Record attempt
+        if: ${{ fromJSON(steps.attempt.outputs.attempt) <= fromJSON(env.MAX_FIX) }}
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          gh issue comment "${{ inputs.issue_number }}" \
+            --repo "${{ github.repository }}" \
+            --body "🛠️ **${FIX_MARKER} ${{ steps.attempt.outputs.attempt }}/${MAX_FIX}** (automated swarm) — see [run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+
+      - name: Capture current failures
+        if: ${{ fromJSON(steps.attempt.outputs.attempt) <= fromJSON(env.MAX_FIX) }}
+        run: |
+          set +e
+          npm run test 2>&1 | tee /tmp/fix-fail.txt
+          set -e
+
+      - name: Run Claude Code — fix
+        if: ${{ fromJSON(steps.attempt.outputs.attempt) <= fromJSON(env.MAX_FIX) }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          FAIL_OUT=$(cat /tmp/fix-fail.txt)
+          ISSUE_CONTEXT=$(./scripts/get-issue-context.sh "${{ github.repository }}" "${{ inputs.issue_number }}" 2>/dev/null || true)
+
+          claude -p "$(cat <<PROMPT
+          The test suite for this feature is failing and the card is blocked. Fix it.
+          The problem may be in the implementation OR in the tests. Read CLAUDE.md first.
+
+          ## Failing test output
+          \`\`\`
+          ${FAIL_OUT}
+          \`\`\`
+
+          ## Issue context
+          ${ISSUE_CONTEXT}
+
+          Make the full suite pass with \`npm run test\`. Do not weaken tests just to
+          make them pass — fix the real cause.
+          PROMPT
+          )" \
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm install *),Bash(npm run build),Bash(npm run lint),Bash(npm run typecheck),Bash(npm run test *),Bash(npm test *),Bash(npx vitest *),Bash(git diff *),Bash(git status)" \
+            --model claude-opus-4-8 \
+            --max-turns 30
+
+      - name: Commit and push fix
+        if: ${{ fromJSON(steps.attempt.outputs.attempt) <= fromJSON(env.MAX_FIX) }}
+        run: |
+          BRANCH="agent/issue-${{ inputs.issue_number }}"
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No changes produced this attempt"
+          else
+            git config user.name "agentic-kanban[bot]"
+            git config user.email "agentic-kanban[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "fix: swarm attempt ${{ steps.attempt.outputs.attempt }} for #${{ inputs.issue_number }}"
+            git push origin "$BRANCH" --force-with-lease
+          fi
+
+      - name: Re-run suite — verdict
+        id: verify
+        if: ${{ fromJSON(steps.attempt.outputs.attempt) <= fromJSON(env.MAX_FIX) }}
+        run: |
+          set +e
+          npm run test 2>&1 | tee /tmp/fix-out.txt
+          TEST_EXIT=${PIPESTATUS[0]}
+          set -e
+          echo "test_exit=$TEST_EXIT" >> "$GITHUB_OUTPUT"
+
+      - name: Green → clear blocker, push to Human Review
+        if: ${{ fromJSON(steps.attempt.outputs.attempt) <= fromJSON(env.MAX_FIX) && steps.verify.outputs.test_exit == '0' }}
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          chmod +x ./scripts/move-issue.sh
+
+          gh issue comment "${{ inputs.issue_number }}" \
+            --repo "${{ github.repository }}" \
+            --body "✅ **Swarm fixed it** (attempt ${{ steps.attempt.outputs.attempt }}). Tests green — clearing \`blocker\`, pushing to Human Review."
+
+          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --limit 500 \
+            | jq -r --argjson num "${{ inputs.issue_number }}" '.items[] | select(.content.number == $num) | .id')
+          if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
+            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Human Review"
+          fi
+
+          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --remove-label "blocker" --remove-label "stage:doing" --remove-label "stage:done" || true
+
+          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
+
+      - name: Red → keep blocker, release for next swarm tick
+        if: ${{ fromJSON(steps.attempt.outputs.attempt) <= fromJSON(env.MAX_FIX) && steps.verify.outputs.test_exit != '0' }}
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          gh issue comment "${{ inputs.issue_number }}" \
+            --repo "${{ github.repository }}" \
+            --body "🔁 Swarm attempt ${{ steps.attempt.outputs.attempt }} did not pass. Keeping \`blocker\`; the dispatcher will swarm again."
+
+          # Drop the in-flight marker so the dispatcher re-dispatches us next tick.
+          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --remove-label "stage:doing" || true
+
+          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
+
+      - name: Handle crash
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          # Crash mid-swarm: release the in-flight marker (keep blocker) so the next
+          # tick retries; the attempt counter already advanced, so MAX_FIX still bounds it.
+          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --remove-label "stage:doing" || true
+          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true

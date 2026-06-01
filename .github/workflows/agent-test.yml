@@ -1,17 +1,16 @@
 name: "Agent: Testing"
 
-# Writes unit and e2e tests for the implemented feature.
-# Runs the test suite, retries on failure, moves to Human Review.
+# Writes unit and e2e tests for the implemented feature, then runs the suite.
+# Pull system, and Test is the RIGHTMOST value-add silo (no downstream agent to
+# pull from it), so on success it PUSHES the card to Human Review.
+# On failure it does NOT retry in-place; it flags `blocker` and stops — the
+# dispatcher then swarms the blocker via agent-fix (visible "stop the line").
 
 on:
   workflow_dispatch:
     inputs:
       issue_number:
         description: 'Issue number to test'
-        required: true
-        type: string
-      pr_number:
-        description: 'PR number containing the implementation'
         required: true
         type: string
 
@@ -23,7 +22,6 @@ permissions:
 env:
   PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
   PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
-  MAX_RETRIES: 3
 
 jobs:
   test:
@@ -49,6 +47,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Resolve PR number
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          PR=$(gh pr list --repo "${{ github.repository }}" \
+            --head "agent/issue-${{ inputs.issue_number }}" \
+            --json number -q '.[0].number // empty')
+          echo "pr_number=$PR" >> "$GITHUB_OUTPUT"
+          echo "Resolved PR: #${PR:-none}"
+
       - name: Gather context
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
@@ -56,9 +65,10 @@ jobs:
           chmod +x ./scripts/get-issue-context.sh
           ./scripts/get-issue-context.sh "${{ github.repository }}" "${{ inputs.issue_number }}" > /tmp/issue-context.md
 
-          # Get the diff for this PR
-          gh pr diff "${{ inputs.pr_number }}" --repo "${{ github.repository }}" > /tmp/pr-diff.txt 2>/dev/null || true
-
+          if [ -n "${{ steps.pr.outputs.pr_number }}" ]; then
+            gh pr diff "${{ steps.pr.outputs.pr_number }}" --repo "${{ github.repository }}" > /tmp/pr-diff.txt 2>/dev/null || true
+          fi
+          touch /tmp/pr-diff.txt
           echo "--- PR Diff Stats ---"
           wc -l /tmp/pr-diff.txt
 
@@ -101,127 +111,98 @@ jobs:
         run: |
           set +e
           npm run test 2>&1 | tee /tmp/test-output.txt
-          TEST_EXIT=$?
+          TEST_EXIT=${PIPESTATUS[0]}
           set -e
-
           echo "test_exit=$TEST_EXIT" >> "$GITHUB_OUTPUT"
-
-          if [ $TEST_EXIT -ne 0 ]; then
-            echo "::warning::Tests failed with exit code $TEST_EXIT"
+          if [ "$TEST_EXIT" -ne 0 ]; then
+            echo "::warning::Tests failing (exit $TEST_EXIT) — will flag blocker"
           else
             echo "::notice::All tests passing"
-          fi
-
-      - name: Retry on test failure
-        if: steps.verify.outputs.test_exit != '0'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          ATTEMPT=1
-
-          while [ $ATTEMPT -le $MAX_RETRIES ]; do
-            echo "::notice::Test fix attempt $ATTEMPT of $MAX_RETRIES"
-
-            TEST_OUTPUT=$(cat /tmp/test-output.txt)
-
-            claude -p "$(cat <<PROMPT
-          The test suite is failing. Fix the failures.
-
-          ## Test Output
-          \`\`\`
-          ${TEST_OUTPUT}
-          \`\`\`
-
-          Fix the failing tests. The issue might be in the tests themselves or in the implementation code.
-          After fixing, the tests should pass.
-          PROMPT
-          )" \
-              --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm run test *),Bash(npm test *),Bash(npx vitest *),Bash(npm run lint),Bash(git diff *)" \
-              --model claude-sonnet-4-6 \
-              --max-turns 15
-
-            # Re-run tests
-            set +e
-            npm run test 2>&1 | tee /tmp/test-output.txt
-            TEST_EXIT=$?
-            set -e
-
-            if [ $TEST_EXIT -eq 0 ]; then
-              echo "::notice::Tests passing after attempt $ATTEMPT"
-              break
-            fi
-
-            ATTEMPT=$((ATTEMPT + 1))
-          done
-
-          if [ $TEST_EXIT -ne 0 ]; then
-            echo "::error::Tests still failing after $MAX_RETRIES retries"
-            exit 1
           fi
 
       - name: Commit and push test code
         run: |
           BRANCH="agent/issue-${{ inputs.issue_number }}"
-
           if git diff --quiet && git diff --cached --quiet; then
             echo "No test changes to commit"
           else
             git config user.name "agentic-kanban[bot]"
             git config user.email "agentic-kanban[bot]@users.noreply.github.com"
-
             git add -A
-            git commit -m "$(cat <<'EOF'
-          test: add tests for #${{ inputs.issue_number }}
-
-          Automated tests by agent-test.
-
-          Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
-          EOF
-          )"
-
+            git commit -m "test: add tests for #${{ inputs.issue_number }}" -m "Automated tests by agent-test."
             git push origin "$BRANCH" --force-with-lease
           fi
 
-      - name: Post test report
+      # ---------- PASS → push to Human Review (Test is the rightmost silo) ----------
+      - name: On pass — report, push to Human Review, kick dispatcher
+        if: steps.verify.outputs.test_exit == '0'
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
-          # Generate test summary
-          TEST_SUMMARY=$(npm run test -- --reporter=verbose 2>&1 | tail -20 || true)
+          chmod +x ./scripts/move-issue.sh
+          TEST_SUMMARY=$(tail -25 /tmp/test-output.txt || true)
 
           gh issue comment "${{ inputs.issue_number }}" \
             --repo "${{ github.repository }}" \
             --body "$(cat <<EOF
           ## 🧪 Test Report (automated)
 
-          All tests passing. Test output:
+          All tests passing.
 
           \`\`\`
           ${TEST_SUMMARY}
           \`\`\`
 
-          Moving to human review.
+          Pushing to Human Review.
 
           ---
           _Generated by agent-test | $(date -u +%Y-%m-%dT%H:%M:%SZ)_
           EOF
           )"
 
-      - name: Move to Human Review
-        env:
-          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
-        run: |
-          chmod +x ./scripts/move-issue.sh
-
-          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" \
-            --owner "$PROJECT_OWNER" \
-            --format json --limit 500 \
-            | jq -r --argjson num "${{ inputs.issue_number }}" \
-              '.items[] | select(.content.number == $num) | .id')
-
+          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --limit 500 \
+            | jq -r --argjson num "${{ inputs.issue_number }}" '.items[] | select(.content.number == $num) | .id')
           if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
             ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Human Review"
           fi
+
+          # Clear stage sub-state labels; the card now lives in the Human Review buffer.
+          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --remove-label "stage:doing" --remove-label "stage:done" || true
+
+          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
+
+      # ---------- FAIL → flag blocker in place; dispatcher will swarm ----------
+      - name: On fail — flag blocker, stop the line
+        if: steps.verify.outputs.test_exit != '0'
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          FAIL_OUT=$(tail -40 /tmp/test-output.txt || true)
+
+          gh issue comment "${{ inputs.issue_number }}" \
+            --repo "${{ github.repository }}" \
+            --body "$(cat <<EOF
+          ## 🚧 Tests failing — \`blocker\` raised (automated)
+
+          The card stays in **Test**, flagged \`blocker\`. New pulls are halted while
+          the swarm (agent-fix) works it.
+
+          \`\`\`
+          ${FAIL_OUT}
+          \`\`\`
+
+          ---
+          _Generated by agent-test | $(date -u +%Y-%m-%dT%H:%M:%SZ)_
+          EOF
+          )"
+
+          # Raise the blocker and drop the in-flight marker so the dispatcher's next
+          # tick dispatches agent-fix on it.
+          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --add-label "blocker" --remove-label "stage:doing" --remove-label "stage:done" || true
+
+          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
 
       - name: Handle failure
         if: failure()
@@ -232,9 +213,13 @@ jobs:
         run: |
           chmod +x ./scripts/notify-telegram.sh
 
+          # Workflow itself crashed (not a test failure) → flag for a human.
+          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+            --add-label "blocker" --add-label "needs-human" --remove-label "stage:doing" || true
+
           gh issue comment "${{ inputs.issue_number }}" \
             --repo "${{ github.repository }}" \
-            --body "⚠️ **Test agent failed after ${MAX_RETRIES} retries.** Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+            --body "⚠️ **Test agent crashed.** Check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
 
           ./scripts/notify-telegram.sh \
-            "⚠️ Test agent failed for issue #${{ inputs.issue_number }} after ${MAX_RETRIES} retries. Manual intervention needed."
+            "⚠️ Test agent crashed for issue #${{ inputs.issue_number }}. Manual intervention needed."
