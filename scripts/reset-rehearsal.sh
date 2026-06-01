@@ -10,7 +10,8 @@
 #   3. delete all agent/issue-* remote branches
 #   4. close the previous demo-backlog issues and remove their board items
 #   5. re-seed a fresh backlog into Todo
-#   6. remind you to run the `deploy-baseline` workflow to restore the VPS
+#   6. trigger the `deploy-baseline` workflow to restore the VPS to the clean app
+#      (skip with RESET_SKIP_DEPLOY=1)
 #
 # Requires: gh authenticated (repo + project scopes), git remote `origin`,
 # branch protection on `master` OFF (or a PAT that can force-push).
@@ -76,7 +77,22 @@ echo "==> Re-seeding backlog..."
 chmod +x "${SCRIPT_DIR}/seed-backlog.sh"
 "${SCRIPT_DIR}/seed-backlog.sh" "$OWNER" "$REPO" "$PROJECT"
 
+# 6. Restore the VPS to the clean baseline app. deploy-baseline rebuilds from the
+#    (now reset) master, pushes ghcr.io/.../factorywall:baseline + :latest, and
+#    deploys it — so the live app drops the previous rehearsal's features.
+#    Opt out with RESET_SKIP_DEPLOY=1 (e.g. when offline or iterating locally).
+if [ "${RESET_SKIP_DEPLOY:-0}" = "1" ]; then
+  echo "==> Skipping VPS restore (RESET_SKIP_DEPLOY=1)."
+  echo "    Restore later: gh workflow run deploy-baseline.yml --ref master --repo ${OWNER}/${REPO}"
+else
+  echo "==> Restoring the VPS to the clean baseline app (deploy-baseline)..."
+  if gh workflow run deploy-baseline.yml --ref master --repo "${OWNER}/${REPO}"; then
+    echo "    Triggered. Watch it:"
+    echo "    gh run watch \$(gh run list -w deploy-baseline.yml -L1 --repo ${OWNER}/${REPO} --json databaseId -q '.[0].databaseId') --repo ${OWNER}/${REPO}"
+  else
+    echo "    ::could not trigger deploy-baseline automatically — run it from the Actions tab."
+  fi
+fi
+
 echo ""
-echo "==> Reset complete."
-echo "    Next: run the 'Deploy: baseline' workflow to restore the VPS to the clean app."
-echo "    (Actions tab -> 'Deploy: baseline' -> Run workflow, or: gh workflow run deploy-baseline.yml)"
+echo "==> Reset complete (repo + board reset; clean baseline deploying to the VPS)."
