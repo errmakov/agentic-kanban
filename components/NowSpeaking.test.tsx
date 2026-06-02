@@ -27,4 +27,29 @@ describe('NowSpeaking', () => {
       expect(container).toBeEmptyDOMElement();
     });
   });
+
+  it('renders nothing when fetch rejects', async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error('network error')) as unknown as typeof fetch;
+    const { container } = render(<NowSpeaking />);
+    await waitFor(() => {
+      expect(container).toBeEmptyDOMElement();
+    });
+  });
+
+  it('renders nothing when API returns non-string session', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      json: async () => ({ session: 42 }),
+    }) as unknown as typeof fetch;
+    const { container } = render(<NowSpeaking />);
+    await waitFor(() => {
+      expect(container).toBeEmptyDOMElement();
+    });
+  });
+
+  it('renders session name with special characters safely', async () => {
+    mockFetch('Alice <script>alert(1)</script>');
+    render(<NowSpeaking />);
+    expect(await screen.findByText('Alice <script>alert(1)</script>')).toBeInTheDocument();
+    expect(document.querySelector('script')).toBeNull();
+  });
 });
