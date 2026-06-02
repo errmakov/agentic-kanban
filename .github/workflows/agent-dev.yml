@@ -16,6 +16,11 @@ on:
         required: false
         type: string
         default: ''
+      rework:
+        description: 'Set "true" when re-running after a human changes-requested: rework in place in Human Review, then re-test + re-screenshot (do NOT advance via the Dev->Test pull).'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -231,17 +236,26 @@ jobs:
           EOF
           )"
 
-      - name: Mark Dev done (await pull) + kick dispatcher
+      - name: Mark done + advance (Dev->Test pull, or re-review after rework)
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
-          # Pull system: do NOT push to Test. Mark this card done-in-silo and stop.
-          # The dispatcher pulls it into Test only when Test is under its WIP limit.
-          gh api --method POST "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels" -f "labels[]=stage:done" >/dev/null 2>&1 || true
-          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:doing" >/dev/null 2>&1 || true
-
-          # Nudge the dispatcher to run a tick now so flow propagates immediately.
-          gh api --method POST "repos/${{ github.repository }}/actions/workflows/dispatcher.yml/dispatches" -f ref=master >/dev/null 2>&1 || true
+          if [ -n "${{ inputs.rework }}" ]; then
+            # Rework after a human changes-requested: the card stays in Human Review (no
+            # backward move). Re-run agent-test on the reworked branch so it RE-TESTS and
+            # re-sends the screenshot review album, then re-marks done. Keep stage:doing
+            # (in flight) so the dispatcher's Notify holds off until agent-test finishes.
+            gh issue comment "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
+              --body "🔧 Rework pushed — re-running tests + capturing fresh review screenshots before re-review." >/dev/null 2>&1 || true
+            gh api --method POST "repos/${{ github.repository }}/actions/workflows/agent-test.yml/dispatches" -f ref=master -f "inputs[issue_number]=${{ inputs.issue_number }}" >/dev/null 2>&1 || true
+          else
+            # Pull system: do NOT push to Test. Mark this card done-in-silo and stop.
+            # The dispatcher pulls it into Test only when Test is under its WIP limit.
+            gh api --method POST "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels" -f "labels[]=stage:done" >/dev/null 2>&1 || true
+            gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:doing" >/dev/null 2>&1 || true
+            # Nudge the dispatcher to run a tick now so flow propagates immediately.
+            gh api --method POST "repos/${{ github.repository }}/actions/workflows/dispatcher.yml/dispatches" -f ref=master >/dev/null 2>&1 || true
+          fi
 
       - name: Handle failure
         if: failure()

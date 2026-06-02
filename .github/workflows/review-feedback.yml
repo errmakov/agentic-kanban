@@ -72,5 +72,6 @@ jobs:
             gh api --method POST "repos/$REPO/actions/workflows/agent-dev.yml/dispatches" \
               -f ref=master \
               -f "inputs[issue_number]=$ISSUE" \
+              -f "inputs[rework]=true" \
               -f "inputs[retry_context]=Human reviewer requested changes — read the most recent issue comments for the specifics and address them." >/dev/null 2>&1 || true
           fi
