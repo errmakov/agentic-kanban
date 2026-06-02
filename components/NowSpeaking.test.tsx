@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { NowSpeaking } from './NowSpeaking';
 
@@ -20,30 +20,24 @@ describe('NowSpeaking', () => {
     expect(screen.getByText(/now speaking/i)).toBeInTheDocument();
   });
 
-  it('renders nothing when the session is empty', async () => {
+  it('shows a prompt to set the session when empty', async () => {
     mockFetch('');
-    const { container } = render(<NowSpeaking />);
-    await waitFor(() => {
-      expect(container).toBeEmptyDOMElement();
-    });
+    render(<NowSpeaking />);
+    expect(await screen.findByRole('button', { name: /set who/i })).toBeInTheDocument();
   });
 
-  it('renders nothing when fetch rejects', async () => {
+  it('shows the prompt when fetch rejects', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('network error')) as unknown as typeof fetch;
-    const { container } = render(<NowSpeaking />);
-    await waitFor(() => {
-      expect(container).toBeEmptyDOMElement();
-    });
+    render(<NowSpeaking />);
+    expect(await screen.findByRole('button', { name: /set who/i })).toBeInTheDocument();
   });
 
-  it('renders nothing when API returns non-string session', async () => {
+  it('shows the prompt when API returns non-string session', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       json: async () => ({ session: 42 }),
     }) as unknown as typeof fetch;
-    const { container } = render(<NowSpeaking />);
-    await waitFor(() => {
-      expect(container).toBeEmptyDOMElement();
-    });
+    render(<NowSpeaking />);
+    expect(await screen.findByRole('button', { name: /set who/i })).toBeInTheDocument();
   });
 
   it('renders session name with special characters safely', async () => {
@@ -51,5 +45,32 @@ describe('NowSpeaking', () => {
     render(<NowSpeaking />);
     expect(await screen.findByText('Alice <script>alert(1)</script>')).toBeInTheDocument();
     expect(document.querySelector('script')).toBeNull();
+  });
+
+  it('lets an organizer set the session and persists it via PUT', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({ session: '' }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<NowSpeaking />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /set who/i }));
+    fireEvent.change(screen.getByLabelText(/now speaking/i), {
+      target: { value: 'Alice — Intro' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    expect(await screen.findByText('Alice — Intro')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/now-speaking',
+        expect.objectContaining({
+          method: 'PUT',
+          body: JSON.stringify({ session: 'Alice — Intro' }),
+        }),
+      );
+    });
   });
 });
