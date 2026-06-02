@@ -133,6 +133,101 @@ jobs:
             git push origin "$BRANCH" --force-with-lease
           fi
 
+      # ---------- PASS → screenshot the PR build, send the review album ----------
+      # Best-effort and branch-independent: this step body is read from the default
+      # branch, but the checkout above swapped the workspace to the PR branch (which
+      # predates any new scripts/ helper), so the capture + Telegram upload are INLINED
+      # here rather than calling a checked-out script. A failure here never blocks the
+      # green path (continue-on-error) — the dispatcher then falls back to a text-only
+      # review notice (it skips only when `review-notified` is set, which we set only
+      # after the album actually sends).
+      - name: On pass — capture screenshots & send review album (best-effort)
+        if: steps.verify.outputs.test_exit == '0'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set +e
+          REPO="${{ github.repository }}"
+          ISSUE="${{ inputs.issue_number }}"
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "Telegram creds absent — skipping screenshots (dispatcher sends text)."
+            exit 0
+          fi
+
+          TITLE=$(gh issue view "$ISSUE" --repo "$REPO" --json title -q '.title' 2>/dev/null || echo "#$ISSUE")
+          PR_URL=$(gh pr list --repo "$REPO" --head "agent/issue-$ISSUE" --json url -q '.[0].url // ""')
+
+          # Build + boot the PR build so we screenshot exactly what's under review.
+          npm run build || { echo "build failed — skipping screenshots"; exit 0; }
+          npx playwright install --with-deps chromium || npx playwright install chromium
+
+          npm run start > /tmp/server.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:3000 >/dev/null 2>&1 && break
+            sleep 2
+          done
+
+          # Screenshot three breakpoints. Written to the workspace root so Node resolves
+          # the project's node_modules (a /tmp script could not import @playwright/test).
+          mkdir -p /tmp/shots
+          cat > _capture-shots.mjs <<'MJS'
+          import { chromium } from '@playwright/test';
+          const URL = process.env.SHOT_URL || 'http://127.0.0.1:3000';
+          const widths = [['mobile', 390, 844], ['tablet', 768, 1024], ['desktop', 1440, 900]];
+          const browser = await chromium.launch();
+          for (const [name, width, height] of widths) {
+            const page = await browser.newPage({ viewport: { width, height } });
+            try {
+              await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+              await page.waitForTimeout(1200);
+              await page.screenshot({ path: `/tmp/shots/shot-${name}.png`, fullPage: true });
+              console.log('captured', name);
+            } catch (e) {
+              console.error('failed', name, e.message);
+            }
+            await page.close();
+          }
+          await browser.close();
+          MJS
+          SHOT_URL=http://127.0.0.1:3000 node _capture-shots.mjs
+          kill "$SERVER_PID" 2>/dev/null || true
+          rm -f _capture-shots.mjs
+
+          shots=(); for n in mobile tablet desktop; do [ -s "/tmp/shots/shot-$n.png" ] && shots+=("/tmp/shots/shot-$n.png"); done
+          if [ "${#shots[@]}" -eq 0 ]; then
+            echo "No screenshots captured — dispatcher will send the text-only review notice."
+            exit 0
+          fi
+
+          CAPTION=$(printf '%b' "🔍 *Review Needed* — #${ISSUE}: *${TITLE}*\nPR: ${PR_URL}\nIssue: ${{ github.server_url }}/${REPO}/issues/${ISSUE}\n\nScreens: mobile · tablet · desktop\nApprove → add the \`approved\` label · Changes → add \`changes-requested\`")
+
+          media='[]'; forms=(); i=0
+          for f in "${shots[@]}"; do
+            if [ "$i" -eq 0 ]; then
+              media=$(echo "$media" | jq --arg m "attach://m$i" --arg c "$CAPTION" '. + [{type:"photo",media:$m,caption:$c,parse_mode:"Markdown"}]')
+            else
+              media=$(echo "$media" | jq --arg m "attach://m$i" '. + [{type:"photo",media:$m}]')
+            fi
+            forms+=(-F "m$i=@$f"); i=$((i+1))
+          done
+
+          CODE=$(curl -s -o /tmp/tg.out -w '%{http_code}' \
+            -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMediaGroup" \
+            -F "chat_id=${TELEGRAM_CHAT_ID}" -F "media=${media}" "${forms[@]}")
+          if [ "$CODE" = "200" ]; then
+            gh issue edit "$ISSUE" --repo "$REPO" --add-label "review-notified" 2>/dev/null || true
+            echo "Review album sent (${#shots[@]} shots) + review-notified set."
+          else
+            echo "::warning::sendMediaGroup HTTP $CODE — dispatcher will send text fallback"
+            cat /tmp/tg.out 2>/dev/null || true
+          fi
+          exit 0
+
       # ---------- PASS → push to Human Review (Test is the rightmost silo) ----------
       - name: On pass — report, push to Human Review, kick dispatcher
         if: steps.verify.outputs.test_exit == '0'
