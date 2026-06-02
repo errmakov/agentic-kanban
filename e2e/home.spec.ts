@@ -10,3 +10,8 @@ test('header shows a live attendee counter', async ({ page }) => {
   const counter = page.getByText(/viewing/);
   await expect(counter).toBeVisible();
 });
+
+test('header shows an accessible share button', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: /copy session link/i })).toBeVisible();
+});
