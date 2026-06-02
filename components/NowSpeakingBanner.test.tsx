@@ -27,4 +27,24 @@ describe('NowSpeakingBanner', () => {
     await waitFor(() => expect(fetch).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
   });
+
+  it('renders nothing while the fetch is in flight', () => {
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => {})));
+    const { container } = render(<NowSpeakingBanner />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('renders nothing when fetch rejects', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network error')));
+    const { container } = render(<NowSpeakingBanner />);
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('has accessible role and aria-live attributes when visible', async () => {
+    mockFetch('Live Demo');
+    render(<NowSpeakingBanner />);
+    const banner = await screen.findByRole('status');
+    expect(banner).toHaveAttribute('aria-live', 'polite');
+  });
 });
