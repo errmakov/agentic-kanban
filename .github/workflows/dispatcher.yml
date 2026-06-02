@@ -146,6 +146,20 @@ jobs:
             saba_n=$(count_status "SA/BA")
             echo "WIP now → SA/BA:$saba_n/$WIP_SABA  Dev:$dev_n/$WIP_DEV  Test:$test_n/$WIP_TEST"
 
+            # 2-0. Test → Human Review. Tests passed (stage:done in Test). The DISPATCHER
+            # makes this move (not agent-test) so a transient API/rate-limit failure can't
+            # strand the card — the next tick just retries. Frees Test WIP for 2a below.
+            mapfile -t C < <(jq -c '[.[] | select(.status=="Test" and (.labels|index("stage:done")))] | sort_by(.number) | .[]' board-state.json)
+            for item in "${C[@]}"; do
+              NUM=$(echo "$item" | jq -r '.number'); ID=$(echo "$item" | jq -r '.item_id')
+              echo "::notice::MOVE #$NUM  Test → Human Review (tests passed)"
+              if [ "$DRY_RUN" != "true" ]; then
+                move "$ID" "Human Review"
+                gh issue edit "$NUM" --repo "$REPO" --remove-label "stage:done" --remove-label "stage:doing" >/dev/null 2>&1 || true
+              fi
+              test_n=$((test_n-1))
+            done
+
             # 2a. Test ← Dev (pull Dev cards that are stage:done and not in-flight)
             mapfile -t C < <(jq -c '[.[] | select(.status=="Dev" and (.labels|index("stage:done")) and ((.labels|index("stage:doing"))|not))] | sort_by(.number) | .[]' board-state.json)
             for item in "${C[@]}"; do
