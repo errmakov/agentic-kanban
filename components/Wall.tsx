@@ -1,4 +1,6 @@
 import { AgendaList } from './AgendaList';
+import { ReactionBar } from './ReactionBar';
+import { Countdown } from './Countdown';
 
 export function Wall() {
   return (
@@ -11,6 +13,8 @@ export function Wall() {
         implemented by an AI agent pulling a card across the board.
       </p>
       <AgendaList />
+      <ReactionBar />
+      <Countdown />
     </section>
   );
 }
