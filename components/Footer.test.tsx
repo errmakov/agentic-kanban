@@ -7,6 +7,12 @@ describe('Footer', () => {
     vi.unstubAllEnvs();
   });
 
+  it('always renders the static footer text', () => {
+    vi.stubEnv('NEXT_PUBLIC_VENUE_MAP_URL', '');
+    render(<Footer />);
+    expect(screen.getByText(/FactoryWall/)).toBeInTheDocument();
+  });
+
   it('renders a venue map link when NEXT_PUBLIC_VENUE_MAP_URL is set', () => {
     vi.stubEnv('NEXT_PUBLIC_VENUE_MAP_URL', 'https://maps.example.com/venue');
     render(<Footer />);
@@ -16,8 +22,14 @@ describe('Footer', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
-  it('renders no venue map link when NEXT_PUBLIC_VENUE_MAP_URL is unset', () => {
+  it('renders no venue map link when NEXT_PUBLIC_VENUE_MAP_URL is empty string', () => {
     vi.stubEnv('NEXT_PUBLIC_VENUE_MAP_URL', '');
+    render(<Footer />);
+    expect(screen.queryByRole('link', { name: /venue map/i })).not.toBeInTheDocument();
+  });
+
+  it('renders no venue map link when NEXT_PUBLIC_VENUE_MAP_URL is undefined', () => {
+    vi.stubEnv('NEXT_PUBLIC_VENUE_MAP_URL', undefined as unknown as string);
     render(<Footer />);
     expect(screen.queryByRole('link', { name: /venue map/i })).not.toBeInTheDocument();
   });

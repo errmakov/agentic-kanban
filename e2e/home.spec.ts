@@ -37,3 +37,8 @@ test('speaker bio cards section is visible with at least two speaker names', asy
   await expect(page.getByRole('heading', { name: 'Ada Okafor' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Mateo Rossi' })).toBeVisible();
 });
+
+test('footer contains FactoryWall text', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('contentinfo')).toContainText('FactoryWall');
+});
