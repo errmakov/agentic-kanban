@@ -57,8 +57,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
-          PRIOR=$(gh issue view "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --json comments -q "[.comments[] | select(.body | contains(\"${RESOLVE_MARKER}\"))] | length")
+          PRIOR=$(gh api "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/comments?per_page=100" \
+            -q "[.[] | select(.body | contains(\"${RESOLVE_MARKER}\"))] | length")
           echo "n=$(( PRIOR + 1 ))" >> "$GITHUB_OUTPUT"
           echo "Conflict-resolve attempt $(( PRIOR + 1 )) of $MAX_RESOLVE"
 

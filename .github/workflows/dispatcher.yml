@@ -261,9 +261,8 @@ jobs:
             echo "::notice::Sending review notification for issue #${ISSUE_NUM}"
 
             if [ "$DRY_RUN" != "true" ]; then
-              PR_URL=$(gh pr list --repo "$REPO" \
-                --search "head:agent/issue-${ISSUE_NUM}" \
-                --json url -q '.[0].url // "No PR found"')
+              PR_URL=$(gh api "repos/$REPO/pulls?head=${REPO%%/*}:agent/issue-${ISSUE_NUM}&state=open" \
+                -q '.[0].html_url // "No PR found"')
 
               ./scripts/notify-telegram.sh \
                 "🔍 *Review Needed* — #${ISSUE_NUM}: *${TITLE}*\nPR: ${PR_URL}\nIssue: ${{ github.server_url }}/${REPO}/issues/${ISSUE_NUM}\n\nApprove → add the \`approved\` label · Changes → add \`changes-requested\`"

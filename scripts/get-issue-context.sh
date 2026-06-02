@@ -11,14 +11,14 @@ set -euo pipefail
 REPO="${1:?Usage: get-issue-context.sh <repo> <issue_number>}"
 ISSUE_NUMBER="${2:?Usage: get-issue-context.sh <repo> <issue_number>}"
 
-# Fetch issue details
-ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" \
-  --repo "$REPO" \
-  --json title,body,labels,assignees,comments,state)
+# Fetch issue details + comments via REST (gh api) so this stays OFF the GraphQL
+# bucket — get-issue-context runs in every agent, so it was a top GraphQL consumer.
+ISSUE_JSON=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}")
+COMMENTS_JSON=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments?per_page=100")
 
 TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
 BODY=$(echo "$ISSUE_JSON" | jq -r '.body // "No description provided."')
-LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[].name] | join(", ") // "none"')
+LABELS=$(echo "$ISSUE_JSON" | jq -r 'if (.labels | length) > 0 then [.labels[].name] | join(", ") else "none" end')
 
 # Output as structured markdown
 cat <<EOF
@@ -32,12 +32,12 @@ ${BODY}
 EOF
 
 # Append all comments
-COMMENT_COUNT=$(echo "$ISSUE_JSON" | jq '.comments | length')
+COMMENT_COUNT=$(echo "$COMMENTS_JSON" | jq 'length')
 
 if [ "$COMMENT_COUNT" -gt 0 ]; then
   echo ""
   echo "## Comments"
   echo ""
 
-  echo "$ISSUE_JSON" | jq -r '.comments[] | "### Comment by \(.author.login) (\(.createdAt))\n\n\(.body)\n"'
+  echo "$COMMENTS_JSON" | jq -r '.[] | "### Comment by \(.user.login) (\(.created_at))\n\n\(.body)\n"'
 fi

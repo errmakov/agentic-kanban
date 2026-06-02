@@ -53,9 +53,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
-          PR=$(gh pr list --repo "${{ github.repository }}" \
-            --head "agent/issue-${{ inputs.issue_number }}" \
-            --json number -q '.[0].number // empty')
+          PR=$(gh api "repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:agent/issue-${{ inputs.issue_number }}&state=open" -q '.[0].number // empty')
           echo "pr_number=$PR" >> "$GITHUB_OUTPUT"
           echo "Resolved PR: #${PR:-none}"
 
@@ -167,8 +165,8 @@ jobs:
             exit 0
           fi
 
-          TITLE=$(gh issue view "$ISSUE" --repo "$REPO" --json title -q '.title' 2>/dev/null || echo "#$ISSUE")
-          PR_URL=$(gh pr list --repo "$REPO" --head "agent/issue-$ISSUE" --json url -q '.[0].url // ""')
+          TITLE=$(gh api "repos/$REPO/issues/$ISSUE" -q '.title' 2>/dev/null || echo "#$ISSUE")
+          PR_URL=$(gh api "repos/$REPO/pulls?head=${{ github.repository_owner }}:agent/issue-$ISSUE&state=open" -q '.[0].html_url // ""')
 
           # Build + boot the PR build so we screenshot exactly what's under review.
           npm run build || { echo "build failed — skipping screenshots"; exit 0; }
