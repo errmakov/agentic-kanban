@@ -43,6 +43,9 @@ jobs:
       - name: Install Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Gather full context
         id: context
         env:
@@ -107,6 +110,16 @@ jobs:
             --model claude-opus-4-8 \
             --max-turns 30 \
             --output-format json | tee /tmp/claude.json | jq -r '.result // empty'
+
+          # Fail fast if Claude did no work (empty output / drained credits / API error).
+          # total_cost_usd==0 means no successful model call — fail so the line stops
+          # (blocker + needs-human) instead of committing a hollow, baseline PR.
+          if [ ! -s /tmp/claude.json ] \
+             || [ "$(jq -r '.is_error // false' /tmp/claude.json 2>/dev/null)" = "true" ] \
+             || [ "$(jq -r '.total_cost_usd // 0' /tmp/claude.json 2>/dev/null)" = "0" ]; then
+            echo "::error::Claude produced no usable result for #${{ inputs.issue_number }} (empty / usage-limit / error) — stopping the line."
+            exit 1
+          fi
 
       - name: Report agent spend
         if: always()
