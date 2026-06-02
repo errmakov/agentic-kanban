@@ -234,11 +234,11 @@ jobs:
         run: |
           # Pull system: do NOT push to Test. Mark this card done-in-silo and stop.
           # The dispatcher pulls it into Test only when Test is under its WIP limit.
-          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --add-label "stage:done" --remove-label "stage:doing" || true
+          gh api --method POST "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels" -f "labels[]=stage:done" >/dev/null 2>&1 || true
+          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:doing" >/dev/null 2>&1 || true
 
           # Nudge the dispatcher to run a tick now so flow propagates immediately.
-          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
+          gh api --method POST "repos/${{ github.repository }}/actions/workflows/dispatcher.yml/dispatches" -f ref=master >/dev/null 2>&1 || true
 
       - name: Handle failure
         if: failure()
@@ -251,8 +251,8 @@ jobs:
 
           # Hard agent failure → flag for a human and clear the in-flight marker so
           # the card isn't stuck counting against Dev WIP.
-          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --add-label "blocker" --add-label "needs-human" --remove-label "stage:doing" || true
+          gh api --method POST "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels" -f "labels[]=blocker" -f "labels[]=needs-human" >/dev/null 2>&1 || true
+          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:doing" >/dev/null 2>&1 || true
 
           gh issue comment "${{ inputs.issue_number }}" \
             --repo "${{ github.repository }}" \

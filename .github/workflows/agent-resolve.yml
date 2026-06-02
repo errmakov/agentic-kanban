@@ -70,8 +70,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           chmod +x ./scripts/notify-telegram.sh
-          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --add-label "needs-human" || true
+          gh api --method POST "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels" -f "labels[]=needs-human" >/dev/null 2>&1 || true
           gh issue comment "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
             --body "🆘 **Could not auto-resolve the merge conflict after ${MAX_RESOLVE} rounds.** Card stays in Ready to Deploy with \`needs-human\` — resolve \`agent/issue-${{ inputs.issue_number }}\` against master by hand, then re-run the batch deploy."
           ./scripts/notify-telegram.sh "🆘 Merge conflict on #${{ inputs.issue_number }} needs a human after ${MAX_RESOLVE} resolve attempts."
@@ -162,7 +161,7 @@ jobs:
           # counter (from comments) bounds it at MAX_RESOLVE, then we escalate.
           gh issue comment "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
             --body "🔁 Resolve attempt ${{ steps.attempt.outputs.n }} didn't build — retrying."
-          gh workflow run agent-resolve.yml -f issue_number="${{ inputs.issue_number }}" --repo "${{ github.repository }}" || true
+          gh api --method POST "repos/${{ github.repository }}/actions/workflows/agent-resolve.yml/dispatches" -f ref=master -f "inputs[issue_number]=${{ inputs.issue_number }}" >/dev/null 2>&1 || true
 
       - name: Handle crash
         if: failure()

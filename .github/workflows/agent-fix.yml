@@ -84,8 +84,8 @@ jobs:
           # Test pushes forward, and only on success; a broken card never gets pushed
           # to Human Review (that would force a forbidden backward move later).
           # It keeps `blocker`, so the line stays stopped until a human resolves it.
-          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --add-label "needs-human" --remove-label "stage:doing" || true
+          gh api --method POST "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels" -f "labels[]=needs-human" >/dev/null 2>&1 || true
+          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:doing" >/dev/null 2>&1 || true
 
           gh issue comment "${{ inputs.issue_number }}" \
             --repo "${{ github.repository }}" \
@@ -194,10 +194,11 @@ jobs:
             ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Human Review"
           fi
 
-          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --remove-label "blocker" --remove-label "stage:doing" --remove-label "stage:done" || true
+          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/blocker" >/dev/null 2>&1 || true
+          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:doing" >/dev/null 2>&1 || true
+          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:done" >/dev/null 2>&1 || true
 
-          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
+          gh api --method POST "repos/${{ github.repository }}/actions/workflows/dispatcher.yml/dispatches" -f ref=master >/dev/null 2>&1 || true
 
       - name: Red → keep blocker, release for next swarm tick
         if: ${{ fromJSON(steps.attempt.outputs.attempt) <= fromJSON(env.MAX_FIX) && steps.verify.outputs.test_exit != '0' }}
@@ -210,10 +211,10 @@ jobs:
 
           # Re-assert blocker (a human resume may have cleared it) and drop the in-flight
           # marker so the dispatcher re-dispatches us next tick.
-          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --add-label "blocker" --remove-label "stage:doing" || true
+          gh api --method POST "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels" -f "labels[]=blocker" >/dev/null 2>&1 || true
+          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:doing" >/dev/null 2>&1 || true
 
-          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
+          gh api --method POST "repos/${{ github.repository }}/actions/workflows/dispatcher.yml/dispatches" -f ref=master >/dev/null 2>&1 || true
 
       - name: Handle crash
         if: failure()
@@ -222,6 +223,6 @@ jobs:
         run: |
           # Crash mid-swarm: re-assert blocker and release the in-flight marker so the
           # next tick retries; the attempt counter already advanced, so MAX_FIX bounds it.
-          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --add-label "blocker" --remove-label "stage:doing" || true
-          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
+          gh api --method POST "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels" -f "labels[]=blocker" >/dev/null 2>&1 || true
+          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:doing" >/dev/null 2>&1 || true
+          gh api --method POST "repos/${{ github.repository }}/actions/workflows/dispatcher.yml/dispatches" -f ref=master >/dev/null 2>&1 || true

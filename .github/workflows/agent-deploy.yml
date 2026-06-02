@@ -86,7 +86,7 @@ jobs:
             else
               echo "::warning::Merge failed for #${ISSUE} (conflict) — dispatching agent-resolve (stays in Ready to Deploy)"
               FAILED="$FAILED $ISSUE"
-              gh workflow run agent-resolve.yml -f issue_number="$ISSUE" --repo "${{ github.repository }}" || true
+              gh api --method POST "repos/${{ github.repository }}/actions/workflows/agent-resolve.yml/dispatches" -f ref=master -f "inputs[issue_number]=$ISSUE" >/dev/null 2>&1 || true
             fi
           done < <(jq -c '.[]' ready.json)
 
@@ -251,7 +251,7 @@ jobs:
             fi
             gh issue close "$ISSUE" --repo "${{ github.repository }}" \
               --comment "✅ **Batch-deployed to production.**" 2>/dev/null || true
-            gh issue edit "$ISSUE" --repo "${{ github.repository }}" --remove-label "review-notified" 2>/dev/null || true
+            gh api --method DELETE "repos/${{ github.repository }}/issues/$ISSUE/labels/review-notified" >/dev/null 2>&1 || true
           done
 
       - name: On failure — alert (items stay in Ready to Deploy for re-run)

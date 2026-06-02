@@ -69,12 +69,23 @@ jobs:
 
           chmod +x ./scripts/move-issue.sh
 
+          # Label ops via REST (POST/DELETE labels) to stay OFF the GraphQL bucket that
+          # board polling + moves must use. Idempotent: DELETE of an absent label 404s
+          # harmlessly (|| true); POST of an existing label is a no-op.
           relabel() {  # <issue> <add|-> <remove|->
-            local args=()
-            [ "$2" != "-" ] && args+=(--add-label "$2")
-            [ "$3" != "-" ] && args+=(--remove-label "$3")
-            [ ${#args[@]} -eq 0 ] && return 0
-            gh issue edit "$1" --repo "$REPO" "${args[@]}" >/dev/null 2>&1 || true
+            [ "$2" != "-" ] && gh api --method POST "repos/$REPO/issues/$1/labels" -f "labels[]=$2" >/dev/null 2>&1 || true
+            [ "$3" != "-" ] && gh api --method DELETE "repos/$REPO/issues/$1/labels/$3" >/dev/null 2>&1 || true
+            return 0
+          }
+          # Trigger a workflow via the REST workflow_dispatch endpoint — no GraphQL
+          # default-branch lookup (which is what `gh workflow run` does and what failed
+          # under rate-limit).
+          kick() {  # <workflow-file> [issue_number]
+            if [ -n "${2:-}" ]; then
+              gh api --method POST "repos/$REPO/actions/workflows/$1/dispatches" -f ref=master -f "inputs[issue_number]=$2" >/dev/null 2>&1 || true
+            else
+              gh api --method POST "repos/$REPO/actions/workflows/$1/dispatches" -f ref=master >/dev/null 2>&1 || true
+            fi
           }
           move() { ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$1" "$2" >/dev/null; }
           count_status() { jq -r --arg s "$1" '[.[] | select(.status==$s)] | length' board-state.json; }
@@ -101,12 +112,12 @@ jobs:
               fi
               echo "::notice::RESUME #$NUM in $ST → $AGENT"
               if [ "$DRY_RUN" != "true" ]; then
-                gh issue edit "$NUM" --repo "$REPO" \
-                  --remove-label "retry" --remove-label "blocker" --remove-label "needs-human" \
-                  --add-label "stage:doing" >/dev/null 2>&1 || true
+                relabel "$NUM" "stage:doing" "retry"
+                relabel "$NUM" "-" "blocker"
+                relabel "$NUM" "-" "needs-human"
                 gh issue comment "$NUM" --repo "$REPO" \
                   --body "▶️ Resumed by human — re-dispatching \`${AGENT%.yml}\` in **$ST**. Swarm attempts reset." >/dev/null 2>&1 || true
-                gh workflow run "$AGENT" -f issue_number="$NUM" --repo "$REPO"
+                kick "$AGENT" "$NUM"
               fi
             done
             echo "Handled human resume(s); deferring normal pulls to the next tick."
@@ -134,7 +145,7 @@ jobs:
               echo "::notice::Swarming blocker on #$NUM → agent-fix"
               if [ "$DRY_RUN" != "true" ]; then
                 relabel "$NUM" "stage:doing" "-"
-                gh workflow run agent-fix.yml -f issue_number="$NUM" --repo "$REPO"
+                kick "agent-fix.yml" "$NUM"
               fi
             done
             echo "Skipping pulls while blocked (stop starting, start finishing)."
@@ -155,7 +166,8 @@ jobs:
               echo "::notice::MOVE #$NUM  Test → Human Review (tests passed)"
               if [ "$DRY_RUN" != "true" ]; then
                 move "$ID" "Human Review"
-                gh issue edit "$NUM" --repo "$REPO" --remove-label "stage:done" --remove-label "stage:doing" >/dev/null 2>&1 || true
+                relabel "$NUM" "-" "stage:done"
+                relabel "$NUM" "-" "stage:doing"
               fi
               test_n=$((test_n-1))
             done
@@ -169,7 +181,7 @@ jobs:
               if [ "$DRY_RUN" != "true" ]; then
                 move "$ID" "Test"
                 relabel "$NUM" "stage:doing" "stage:done"
-                gh workflow run agent-test.yml -f issue_number="$NUM" --repo "$REPO"
+                kick "agent-test.yml" "$NUM"
               fi
               test_n=$((test_n+1)); dev_n=$((dev_n-1))
             done
@@ -183,7 +195,7 @@ jobs:
               if [ "$DRY_RUN" != "true" ]; then
                 move "$ID" "Dev"
                 relabel "$NUM" "stage:doing" "stage:done"
-                gh workflow run agent-dev.yml -f issue_number="$NUM" --repo "$REPO"
+                kick "agent-dev.yml" "$NUM"
               fi
               dev_n=$((dev_n+1)); saba_n=$((saba_n-1))
             done
@@ -199,7 +211,7 @@ jobs:
               if [ "$DRY_RUN" != "true" ]; then
                 move "$ID" "SA/BA"
                 relabel "$NUM" "stage:doing" "-"
-                gh workflow run agent-saba.yml -f issue_number="$NUM" --repo "$REPO"
+                kick "agent-saba.yml" "$NUM"
               fi
               saba_n=$((saba_n+1))
             done
@@ -233,7 +245,7 @@ jobs:
               ./scripts/notify-telegram.sh \
                 "🔍 *Review Needed* — #${ISSUE_NUM}: *${TITLE}*\nPR: ${PR_URL}\nIssue: ${{ github.server_url }}/${REPO}/issues/${ISSUE_NUM}\n\nApprove → add the \`approved\` label · Changes → add \`changes-requested\`"
 
-              gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "review-notified"
+              gh api --method POST "repos/$REPO/issues/$ISSUE_NUM/labels" -f "labels[]=review-notified" >/dev/null 2>&1 || true
             fi
           done
 

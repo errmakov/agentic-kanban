@@ -228,7 +228,7 @@ jobs:
             -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMediaGroup" \
             -F "chat_id=${TELEGRAM_CHAT_ID}" -F "media=${media}" "${forms[@]}")
           if [ "$CODE" = "200" ]; then
-            gh issue edit "$ISSUE" --repo "$REPO" --add-label "review-notified" 2>/dev/null || true
+            gh api --method POST "repos/$REPO/issues/$ISSUE/labels" -f "labels[]=review-notified" >/dev/null 2>&1 || true
             echo "Review album sent (${#shots[@]} shots) + review-notified set."
           else
             echo "::warning::sendMediaGroup HTTP $CODE — dispatcher will send text fallback"
@@ -267,10 +267,10 @@ jobs:
           # could strand the card if GraphQL is rate-limited. We mark done via REST (works
           # even when GraphQL is exhausted); the dispatcher does the Test → Human Review
           # move and retries every tick, so the card is never stuck.
-          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --add-label "stage:done" --remove-label "stage:doing" || true
+          gh api --method POST "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels" -f "labels[]=stage:done" >/dev/null 2>&1 || true
+          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:doing" >/dev/null 2>&1 || true
 
-          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
+          gh api --method POST "repos/${{ github.repository }}/actions/workflows/dispatcher.yml/dispatches" -f ref=master >/dev/null 2>&1 || true
 
       # ---------- FAIL → flag blocker in place; dispatcher will swarm ----------
       - name: On fail — flag blocker, stop the line
@@ -299,10 +299,11 @@ jobs:
 
           # Raise the blocker and drop the in-flight marker so the dispatcher's next
           # tick dispatches agent-fix on it.
-          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --add-label "blocker" --remove-label "stage:doing" --remove-label "stage:done" || true
+          gh api --method POST "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels" -f "labels[]=blocker" >/dev/null 2>&1 || true
+          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:doing" >/dev/null 2>&1 || true
+          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:done" >/dev/null 2>&1 || true
 
-          gh workflow run dispatcher.yml --repo "${{ github.repository }}" || true
+          gh api --method POST "repos/${{ github.repository }}/actions/workflows/dispatcher.yml/dispatches" -f ref=master >/dev/null 2>&1 || true
 
       - name: Handle failure
         if: failure()
@@ -314,8 +315,8 @@ jobs:
           chmod +x ./scripts/notify-telegram.sh
 
           # Workflow itself crashed (not a test failure) → flag for a human.
-          gh issue edit "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --add-label "blocker" --add-label "needs-human" --remove-label "stage:doing" || true
+          gh api --method POST "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels" -f "labels[]=blocker" -f "labels[]=needs-human" >/dev/null 2>&1 || true
+          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:doing" >/dev/null 2>&1 || true
 
           gh issue comment "${{ inputs.issue_number }}" \
             --repo "${{ github.repository }}" \

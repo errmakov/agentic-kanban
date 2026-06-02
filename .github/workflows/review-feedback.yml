@@ -47,21 +47,22 @@ jobs:
           if [ "$DECISION" = "approved" ]; then
             echo "::notice::#$ISSUE approved → Ready to Deploy"
             ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Ready to Deploy"
-            gh issue edit "$ISSUE" --repo "$REPO" \
-              --remove-label "approved" --remove-label "review-notified" \
-              --remove-label "stage:doing" --remove-label "stage:done" || true
+            for L in approved review-notified stage:doing stage:done; do
+              gh api --method DELETE "repos/$REPO/issues/$ISSUE/labels/$L" >/dev/null 2>&1 || true
+            done
             gh issue comment "$ISSUE" --repo "$REPO" \
               --body "✅ **Approved by human** → moved to Ready to Deploy. It ships on the next batch deploy."
           else
             echo "::notice::#$ISSUE changes-requested → back to Dev"
             ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Dev"
-            gh issue edit "$ISSUE" --repo "$REPO" \
-              --remove-label "changes-requested" --remove-label "review-notified" \
-              --remove-label "stage:done" --add-label "stage:doing" || true
+            for L in changes-requested review-notified stage:done; do
+              gh api --method DELETE "repos/$REPO/issues/$ISSUE/labels/$L" >/dev/null 2>&1 || true
+            done
+            gh api --method POST "repos/$REPO/issues/$ISSUE/labels" -f "labels[]=stage:doing" >/dev/null 2>&1 || true
             gh issue comment "$ISSUE" --repo "$REPO" \
               --body "🔄 **Changes requested by human.** Back to Dev — re-dispatching agent-dev with your feedback (see the latest comments)."
-            gh workflow run agent-dev.yml \
-              -f issue_number="$ISSUE" \
-              -f retry_context="Human reviewer requested changes — read the most recent issue comments for the specifics and address them." \
-              --repo "$REPO"
+            gh api --method POST "repos/$REPO/actions/workflows/agent-dev.yml/dispatches" \
+              -f ref=master \
+              -f "inputs[issue_number]=$ISSUE" \
+              -f "inputs[retry_context]=Human reviewer requested changes — read the most recent issue comments for the specifics and address them." >/dev/null 2>&1 || true
           fi
