@@ -1,4 +1,5 @@
 import { AgendaList } from './AgendaList';
+import { FaqAccordion } from './FaqAccordion';
 import { ReactionBar } from './ReactionBar';
 import { Countdown } from './Countdown';
 
@@ -15,6 +16,7 @@ export function Wall() {
       <AgendaList />
       <ReactionBar />
       <Countdown />
+      <FaqAccordion />
     </section>
   );
 }

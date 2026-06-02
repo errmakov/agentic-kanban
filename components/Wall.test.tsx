@@ -35,4 +35,12 @@ describe('Wall', () => {
       expect(screen.getByRole('group', { name: 'Reactions' })).toBeInTheDocument();
     });
   });
+
+  it('renders the FAQ accordion section', () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    render(<Wall />);
+    expect(
+      screen.getByRole('heading', { name: /frequently asked questions/i }),
+    ).toBeInTheDocument();
+  });
 });
