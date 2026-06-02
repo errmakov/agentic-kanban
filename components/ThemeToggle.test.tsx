@@ -27,4 +27,26 @@ describe('ThemeToggle', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(false);
     expect(localStorage.getItem('theme')).toBe('light');
   });
+
+  it('shows "Switch to light theme" when the page already has dark mode active', () => {
+    document.documentElement.classList.add('dark');
+    render(<ThemeToggle />);
+    expect(
+      screen.getByRole('button', { name: /switch to light theme/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('does not throw when localStorage is unavailable', () => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = () => {
+      throw new Error('SecurityError: localStorage unavailable');
+    };
+    try {
+      render(<ThemeToggle />);
+      expect(() => fireEvent.click(screen.getByRole('button'))).not.toThrow();
+      expect(document.documentElement.classList.contains('dark')).toBe(true);
+    } finally {
+      Storage.prototype.setItem = original;
+    }
+  });
 });
