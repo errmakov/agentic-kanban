@@ -64,6 +64,16 @@ describe('POST /api/feedback', () => {
     expect(res.status).toBe(400);
   });
 
+  it('returns 400 when the request body is not valid JSON', async () => {
+    const req = new Request('http://localhost/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'not-json',
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+  });
+
   it('increments the up counter', async () => {
     mockReadFile.mockResolvedValueOnce(JSON.stringify({ up: 3, down: 1 }));
     const res = await POST(makeRequest({ vote: 'up' }));

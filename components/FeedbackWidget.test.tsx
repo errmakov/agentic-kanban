@@ -78,4 +78,43 @@ describe('FeedbackWidget', () => {
     expect(screen.getByLabelText('Thumbs up')).toBeDisabled();
     expect(screen.getByLabelText('Thumbs down')).toHaveAttribute('aria-pressed', 'true');
   });
+
+  it('sets aria-pressed="true" on the up button after voting up', async () => {
+    render(<FeedbackWidget />);
+    await waitFor(() => {
+      expect(screen.getByLabelText('Thumbs up')).toHaveTextContent('3');
+    });
+    fireEvent.click(screen.getByLabelText('Thumbs up'));
+    await waitFor(() => {
+      expect(screen.getByLabelText('Thumbs up')).toHaveAttribute('aria-pressed', 'true');
+    });
+    expect(screen.getByLabelText('Thumbs down')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('defaults counts to 0 when the initial GET fetch fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
+    render(<FeedbackWidget />);
+    await waitFor(() => {
+      expect(screen.getByLabelText('Thumbs up')).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('Thumbs up')).toHaveTextContent('0');
+    expect(screen.getByLabelText('Thumbs down')).toHaveTextContent('0');
+  });
+
+  it('does not POST again when a button is clicked after already voting', async () => {
+    render(<FeedbackWidget />);
+    await waitFor(() => {
+      expect(screen.getByLabelText('Thumbs up')).toHaveTextContent('3');
+    });
+    const fetchMock = vi.mocked(fetch);
+    fireEvent.click(screen.getByLabelText('Thumbs up'));
+    fireEvent.click(screen.getByLabelText('Thumbs up'));
+    await waitFor(() => {
+      expect(localStorage.getItem('fw_feedback_vote')).toBe('up');
+    });
+    const postCalls = fetchMock.mock.calls.filter(
+      ([, opts]) => (opts as RequestInit)?.method === 'POST',
+    );
+    expect(postCalls).toHaveLength(1);
+  });
 });
