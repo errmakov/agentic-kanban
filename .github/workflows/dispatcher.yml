@@ -251,6 +251,13 @@ jobs:
               continue
             fi
 
+            # Card is being reworked in place after a changes-requested (rework-in-flight).
+            # Don't re-request review until agent-dev finishes and flips it to stage:done.
+            if echo "$item" | jq -e '.labels | index("stage:doing")' >/dev/null 2>&1; then
+              echo "#${ISSUE_NUM} is being reworked (stage:doing) — not re-notifying yet"
+              continue
+            fi
+
             echo "::notice::Sending review notification for issue #${ISSUE_NUM}"
 
             if [ "$DRY_RUN" != "true" ]; then

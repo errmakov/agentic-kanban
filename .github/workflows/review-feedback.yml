@@ -55,14 +55,20 @@ jobs:
             gh issue comment "$ISSUE" --repo "$REPO" \
               --body "✅ **Approved by human** → moved to Ready to Deploy. It ships on the next batch deploy."
           else
-            echo "::notice::#$ISSUE changes-requested → back to Dev"
-            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Dev"
+            echo "::notice::#$ISSUE changes-requested → rework IN PLACE (stays in Human Review)"
+            # NO backward move. Moving the card back to Dev violates the pull model and
+            # breaks the downstream WIP limit. Instead we rework in the current silo —
+            # the card stays in Human Review and agent-dev reworks the existing branch
+            # per the feedback (same spirit as the in-place blocker swarm in Test).
+            # stage:doing marks rework-in-flight so the dispatcher's Notify holds off
+            # re-review; when agent-dev finishes it sets stage:done and the next tick
+            # re-sends the review.
             for L in changes-requested review-notified stage:done; do
               gh api --method DELETE "repos/$REPO/issues/$ISSUE/labels/$L" >/dev/null 2>&1 || true
             done
             gh api --method POST "repos/$REPO/issues/$ISSUE/labels" -f "labels[]=stage:doing" >/dev/null 2>&1 || true
             gh issue comment "$ISSUE" --repo "$REPO" \
-              --body "🔄 **Changes requested by human.** Back to Dev — re-dispatching agent-dev with your feedback (see the latest comments)."
+              --body "🔄 **Changes requested by human.** Reworking in place — the card stays in **Human Review** (no backward move) while agent-dev addresses your feedback, then it re-requests review."
             gh api --method POST "repos/$REPO/actions/workflows/agent-dev.yml/dispatches" \
               -f ref=master \
               -f "inputs[issue_number]=$ISSUE" \
