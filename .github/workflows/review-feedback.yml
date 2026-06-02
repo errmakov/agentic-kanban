@@ -40,7 +40,7 @@ jobs:
 
           chmod +x ./scripts/move-issue.sh
 
-          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --limit 500 \
+          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --limit 50 \
             | jq -r --argjson num "$ISSUE" '.items[] | select(.content.number == $num) | .id')
           if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
             echo "::warning::#$ISSUE not on the board — nothing to do"; exit 0

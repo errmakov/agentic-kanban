@@ -248,7 +248,7 @@ jobs:
         run: |
           chmod +x ./scripts/move-issue.sh
           # One board scan reused for every merged issue (was one GraphQL scan PER issue).
-          BOARD_JSON=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --limit 500)
+          BOARD_JSON=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --limit 50)
           for ISSUE in ${{ steps.merge.outputs.merged }}; do
             ITEM_ID=$(jq -r --argjson num "$ISSUE" '.items[] | select(.content.number == $num) | .id' <<<"$BOARD_JSON")
             if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
