@@ -1,4 +1,5 @@
 import { AttendeeCounter } from './AttendeeCounter';
+import { ShareButton } from '@/components/ShareButton';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
 export function Header() {
@@ -13,6 +14,7 @@ export function Header() {
         </div>
         <div className="flex items-center gap-3">
           <AttendeeCounter />
+          <ShareButton />
           <ThemeToggle />
         </div>
       </div>
