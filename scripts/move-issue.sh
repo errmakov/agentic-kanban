@@ -14,42 +14,54 @@ PROJECT_NUMBER="${2:?Usage: move-issue.sh <owner> <project_number> <item_id> <ta
 ITEM_ID="${3:?Usage: move-issue.sh <owner> <project_number> <item_id> <target_status>}"
 TARGET_STATUS="${4:?Usage: move-issue.sh <owner> <project_number> <item_id> <target_status>}"
 
-# The project ID and Status field/option IDs are static, but each query costs
-# GraphQL points and contributes to GitHub's burst (secondary) rate limit. Cache
-# them per-runner in /tmp so repeated moves in one tick skip the two read queries.
-CACHE="/tmp/fw-project-${OWNER}-${PROJECT_NUMBER}.json"
-if [ -s "$CACHE" ]; then
-  PROJECT_ID=$(jq -r '.project_id' "$CACHE")
-  FIELDS_JSON=$(jq -c '.fields' "$CACHE")
-else
-  PROJECT_ID=$(gh project view "$PROJECT_NUMBER" --owner "$OWNER" --format json | jq -r '.id')
-  FIELDS_JSON=$(gh project field-list "$PROJECT_NUMBER" --owner "$OWNER" --format json)
-  if [ -n "$PROJECT_ID" ] && [ "$PROJECT_ID" != "null" ]; then
-    jq -n --arg pid "$PROJECT_ID" --argjson fields "$FIELDS_JSON" \
-      '{project_id: $pid, fields: $fields}' > "$CACHE" 2>/dev/null || true
+# The project node id + Status field id + option ids are STATIC. Resolve them from the
+# cheapest source first so a move normally costs just ONE GraphQL call (the item-edit
+# below) instead of three:
+#   1) $FW_PROJECT_META  — injected by the workflow from the repo variable (free)
+#   2) the FW_PROJECT_META repo variable via REST (gh variable get; core bucket)
+#   3) live GraphQL (project view + field-list), cached per-runner in /tmp (legacy path)
+# 1/2 carry {project_id, status_field_id, options:{<name>:<id>}}; see cache-project-meta.sh.
+META="${FW_PROJECT_META:-}"
+if [ -z "$META" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+  META=$(gh variable get FW_PROJECT_META --repo "$GITHUB_REPOSITORY" 2>/dev/null || true)
+fi
+
+PROJECT_ID=""; STATUS_FIELD_ID=""; TARGET_OPTION_ID=""
+if [ -n "$META" ] && jq -e . >/dev/null 2>&1 <<<"$META"; then
+  PROJECT_ID=$(jq -r '.project_id // empty' <<<"$META")
+  STATUS_FIELD_ID=$(jq -r '.status_field_id // empty' <<<"$META")
+  TARGET_OPTION_ID=$(jq -r --arg s "$TARGET_STATUS" '.options[$s] // empty' <<<"$META")
+fi
+
+# Fall back to live GraphQL if the cache is absent/stale or lacks this status.
+if [ -z "$PROJECT_ID" ] || [ -z "$STATUS_FIELD_ID" ] || [ -z "$TARGET_OPTION_ID" ]; then
+  CACHE="/tmp/fw-project-${OWNER}-${PROJECT_NUMBER}.json"
+  if [ -s "$CACHE" ]; then
+    PROJECT_ID=$(jq -r '.project_id' "$CACHE")
+    FIELDS_JSON=$(jq -c '.fields' "$CACHE")
+  else
+    PROJECT_ID=$(gh project view "$PROJECT_NUMBER" --owner "$OWNER" --format json | jq -r '.id')
+    FIELDS_JSON=$(gh project field-list "$PROJECT_NUMBER" --owner "$OWNER" --format json)
+    if [ -n "$PROJECT_ID" ] && [ "$PROJECT_ID" != "null" ]; then
+      jq -n --arg pid "$PROJECT_ID" --argjson fields "$FIELDS_JSON" \
+        '{project_id: $pid, fields: $fields}' > "$CACHE" 2>/dev/null || true
+    fi
   fi
+  STATUS_FIELD_ID=$(echo "$FIELDS_JSON" | jq -r '.fields[] | select(.name == "Status") | .id')
+  TARGET_OPTION_ID=$(echo "$FIELDS_JSON" | jq -r --arg status "$TARGET_STATUS" \
+    '.fields[] | select(.name == "Status") | .options[] | select(.name == $status) | .id')
 fi
 
 if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "null" ]; then
   echo "Error: Could not find project #${PROJECT_NUMBER} for owner ${OWNER}" >&2
   exit 1
 fi
-
-STATUS_FIELD_ID=$(echo "$FIELDS_JSON" | jq -r '.fields[] | select(.name == "Status") | .id')
-
 if [ -z "$STATUS_FIELD_ID" ] || [ "$STATUS_FIELD_ID" = "null" ]; then
   echo "Error: Could not find Status field in project" >&2
   exit 1
 fi
-
-# Find the target option ID
-TARGET_OPTION_ID=$(echo "$FIELDS_JSON" | jq -r \
-  --arg status "$TARGET_STATUS" \
-  '.fields[] | select(.name == "Status") | .options[] | select(.name == $status) | .id')
-
 if [ -z "$TARGET_OPTION_ID" ] || [ "$TARGET_OPTION_ID" = "null" ]; then
-  echo "Error: Status '${TARGET_STATUS}' not found. Available statuses:" >&2
-  echo "$FIELDS_JSON" | jq -r '.fields[] | select(.name == "Status") | .options[].name' >&2
+  echo "Error: Status '${TARGET_STATUS}' not found in project" >&2
   exit 1
 fi
 

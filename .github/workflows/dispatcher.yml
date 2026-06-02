@@ -39,6 +39,8 @@ permissions:
 env:
   PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
   PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
+  # Static project ids for move-issue.sh (skips its 2 GraphQL metadata reads); see cache-project-meta.sh.
+  FW_PROJECT_META: ${{ vars.FW_PROJECT_META }}
   # WIP limits per silo (whole-silo: stage:doing + stage:done count together).
   # Set as repo variables; the dispatcher is the enforcement point (GitHub's own
   # column limits are only advisory). Edit these live to demo throughput changes.
