@@ -9,4 +9,11 @@ describe('Wall', () => {
       screen.getByRole('heading', { name: /welcome to the workshop/i }),
     ).toBeInTheDocument();
   });
+
+  it('renders the agenda list inside the wall', () => {
+    render(<Wall />);
+    expect(
+      screen.getByRole('heading', { name: /today's agenda/i }),
+    ).toBeInTheDocument();
+  });
 });
