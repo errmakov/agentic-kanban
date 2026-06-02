@@ -151,7 +151,12 @@ jobs:
         run: |
           git push origin "agent/issue-${{ inputs.issue_number }}"
           gh issue comment "${{ inputs.issue_number }}" --repo "${{ github.repository }}" \
-            --body "✅ **Conflict resolved** (attempt ${{ steps.attempt.outputs.n }}) and the branch builds. Re-run the batch deploy to ship it."
+            --body "✅ **Conflict resolved** (attempt ${{ steps.attempt.outputs.n }}) and the branch builds. Auto-re-running the batch deploy to ship it."
+          # Close the loop: the conflict that triggered us happened DURING a deploy the
+          # human already kicked, so finish the job — re-run the batch deploy now that the
+          # branch is mergeable, instead of stranding the card with redeploy-required.
+          # Bounded: a re-conflict re-dispatches resolve up to MAX_RESOLVE, then escalates.
+          gh api --method POST "repos/${{ github.repository }}/actions/workflows/agent-deploy.yml/dispatches" -f ref=master >/dev/null 2>&1 || true
 
       - name: Retry next round (build failed)
         if: ${{ fromJSON(steps.attempt.outputs.n) <= fromJSON(env.MAX_RESOLVE) && steps.verify.outputs.ok != '0' }}
