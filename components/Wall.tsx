@@ -1,3 +1,4 @@
+import { FaqAccordion } from './FaqAccordion';
 import { ReactionBar } from './ReactionBar';
 import { Countdown } from './Countdown';
 
@@ -13,6 +14,7 @@ export function Wall() {
       </p>
       <ReactionBar />
       <Countdown />
+      <FaqAccordion />
     </section>
   );
 }
