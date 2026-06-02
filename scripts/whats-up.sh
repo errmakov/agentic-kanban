@@ -131,15 +131,32 @@ TARGET=$(awk '$3=="in_progress" || $3=="queued"{print $2; exit}' <<<"$TITLED")
 [ -z "$TARGET" ] && TARGET=$(echo "$COMMENT_RUN_IDS" | tr ' ' '\n' | tail -1)
 
 if [ -n "$TARGET" ]; then
-  echo
-  echo "  ${bold}Job steps${reset} ${dim}(gh run view $TARGET — the actual run)${reset}"
-  gh run view "$TARGET" --repo "$REPO" 2>/dev/null | sed 's/^/  /' \
-    || echo "    run $TARGET unavailable"
-  if [ "$LOG" = "1" ]; then
+  # Resolve the run's job id(s) and render the actual STEP tree via `gh run view --job`.
+  # (`gh run view <run>` only lists jobs for an in-progress single-job run — the ✓/*
+  # per-step breakdown lives behind --job.)
+  JOB_IDS=$(gh run view "$TARGET" --repo "$REPO" --json jobs -q '.jobs[].databaseId' 2>/dev/null)
+  if [ -n "$JOB_IDS" ]; then
+    for jid in $JOB_IDS; do
+      echo
+      echo "  ${bold}Job steps${reset} ${dim}(gh run view --job=$jid)${reset}"
+      gh run view --job="$jid" --repo "$REPO" 2>/dev/null | sed 's/^/  /' \
+        || echo "    job $jid unavailable"
+      if [ "$LOG" = "1" ]; then
+        echo
+        echo "  ${bold}Step log${reset} ${dim}(gh run view --job=$jid --log)${reset}"
+        LOGOUT=$(gh run view --job="$jid" --repo "$REPO" --log 2>/dev/null)
+        if [ -n "$LOGOUT" ]; then
+          printf '%s\n' "$LOGOUT" | sed 's/^/  /'
+        else
+          echo "    ${dim}(full logs are only available once the run completes)${reset}"
+        fi
+      fi
+    done
+  else
     echo
-    echo "  ${bold}Full log${reset} ${dim}(gh run view --log $TARGET)${reset}"
-    gh run view "$TARGET" --repo "$REPO" --log 2>/dev/null | sed 's/^/  /' \
-      || echo "    log for $TARGET unavailable"
+    echo "  ${bold}Job steps${reset} ${dim}(gh run view $TARGET)${reset}"
+    gh run view "$TARGET" --repo "$REPO" 2>/dev/null | sed 's/^/  /' \
+      || echo "    run $TARGET unavailable"
   fi
 else
   echo
