@@ -37,3 +37,21 @@ test('speaker bio cards section is visible with at least two speaker names', asy
   await expect(page.getByRole('heading', { name: 'Ada Okafor' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Mateo Rossi' })).toBeVisible();
 });
+
+test('scroll-to-top button appears after scrolling down and scrolls back to top on click', async ({ page }) => {
+  await page.goto('/');
+  const button = page.getByRole('button', { name: 'Scroll to top' });
+
+  // Button is hidden at the top (opacity-0)
+  await expect(button).toHaveClass(/opacity-0/);
+
+  // Scroll down past the 300px threshold
+  await page.evaluate(() => window.scrollTo({ top: 400 }));
+  await expect(button).toHaveClass(/opacity-100/);
+
+  // Click scrolls back to top
+  await button.click();
+  await expect(page).toHaveURL('/');
+  const scrollY = await page.evaluate(() => window.scrollY);
+  expect(scrollY).toBe(0);
+});
