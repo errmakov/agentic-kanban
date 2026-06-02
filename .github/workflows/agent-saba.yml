@@ -71,10 +71,19 @@ jobs:
             --model claude-sonnet-4-6 \
             --max-turns 20 \
             --output-format json \
-          | jq -r '.result' > /tmp/analysis-result.md
+          | tee /tmp/claude.json | jq -r '.result // empty' > /tmp/analysis-result.md
 
           echo "--- Analysis Result ---"
           cat /tmp/analysis-result.md
+
+      - name: Report agent spend
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+        run: |
+          [ -s /tmp/claude.json ] || exit 0
+          chmod +x ./scripts/agent-cost.sh
+          ./scripts/agent-cost.sh "saba" /tmp/claude.json "${{ github.repository }}" "${{ inputs.issue_number }}"
 
       - name: Post analysis as issue comment
         env:

@@ -61,7 +61,7 @@ BACKLOG=(
   "Add a dark/light theme toggle|Let visitors switch FactoryWall between a light and a dark theme, and remember the choice."
   "Show a live attendee counter in the header|Display a number in the header representing how many people are viewing the wall."
   "Add an emoji reaction bar to the wall|Let visitors tap emoji reactions on the wall and see the running counts. The counts are shared across visitors and must survive a page reload and a redeploy (persist them server-side)."
-  "Add a countdown to the next break|Show a countdown timer to the next scheduled break."
+  "Add a shared countdown timer|Let any visitor start a countdown: tap a +Countdown control, set minutes and seconds (MM:SS, up to 99:59) and start it. The running countdown is shared — every connected visitor sees the same timer ticking down in real time, and it survives a page reload and a redeploy (persist it server-side). When it reaches zero, show a clear 'Time's up' state."
   "Add a now-speaking banner|Show a banner naming the session that is currently on."
   "Show the day's agenda as a list|Display the day's agenda as a simple list of sessions and times."
   "Add speaker bio cards|Show a few speaker bio cards with name, role and a short bio."

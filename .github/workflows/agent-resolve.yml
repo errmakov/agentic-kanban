@@ -117,7 +117,8 @@ jobs:
           )" \
               --allowedTools "Read,Edit,Write,Glob,Grep,Bash(git diff *),Bash(git status),Bash(npm run build),Bash(npm run typecheck),Bash(npm run lint)" \
               --model claude-opus-4-8 \
-              --max-turns 30
+              --max-turns 30 \
+              --output-format json | tee /tmp/claude.json | jq -r '.result // empty'
 
             git add -A
             if git diff --cached --quiet; then
@@ -126,6 +127,13 @@ jobs:
             fi
             git commit -m "merge: resolve conflicts with master for #${{ inputs.issue_number }}"
           fi
+
+      - name: Report agent spend
+        if: always()
+        run: |
+          [ -s /tmp/claude.json ] || exit 0
+          chmod +x ./scripts/agent-cost.sh
+          ./scripts/agent-cost.sh "resolve" /tmp/claude.json "${{ github.repository }}" "${{ inputs.issue_number }}"
 
       - name: Verify build
         id: verify
