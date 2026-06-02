@@ -147,7 +147,7 @@ jobs:
             echo "WIP now → SA/BA:$saba_n/$WIP_SABA  Dev:$dev_n/$WIP_DEV  Test:$test_n/$WIP_TEST"
 
             # 2a. Test ← Dev (pull Dev cards that are stage:done and not in-flight)
-            mapfile -t C < <(jq -c '.[] | select(.status=="Dev" and (.labels|index("stage:done")) and ((.labels|index("stage:doing"))|not))' board-state.json)
+            mapfile -t C < <(jq -c '[.[] | select(.status=="Dev" and (.labels|index("stage:done")) and ((.labels|index("stage:doing"))|not))] | sort_by(.number) | .[]' board-state.json)
             for item in "${C[@]}"; do
               [ "$test_n" -lt "$WIP_TEST" ] || { echo "Test at WIP ($WIP_TEST) — no more Dev→Test pulls"; break; }
               NUM=$(echo "$item" | jq -r '.number'); ID=$(echo "$item" | jq -r '.item_id')
@@ -161,7 +161,7 @@ jobs:
             done
 
             # 2b. Dev ← SA/BA
-            mapfile -t C < <(jq -c '.[] | select(.status=="SA/BA" and (.labels|index("stage:done")) and ((.labels|index("stage:doing"))|not))' board-state.json)
+            mapfile -t C < <(jq -c '[.[] | select(.status=="SA/BA" and (.labels|index("stage:done")) and ((.labels|index("stage:doing"))|not))] | sort_by(.number) | .[]' board-state.json)
             for item in "${C[@]}"; do
               [ "$dev_n" -lt "$WIP_DEV" ] || { echo "Dev at WIP ($WIP_DEV) — no more SA/BA→Dev pulls"; break; }
               NUM=$(echo "$item" | jq -r '.number'); ID=$(echo "$item" | jq -r '.item_id')
@@ -175,7 +175,9 @@ jobs:
             done
 
             # 2c. SA/BA ← Ready for Work (the committed queue; humans pull Todo→here)
-            mapfile -t C < <(jq -c '.[] | select(.status=="Ready for Work")' board-state.json)
+            # FIFO: when several cards are pullable, take the earliest-arrived first
+            # (lowest issue number = created/queued first), so flow is first-in-first-out.
+            mapfile -t C < <(jq -c '[.[] | select(.status=="Ready for Work")] | sort_by(.number) | .[]' board-state.json)
             for item in "${C[@]}"; do
               [ "$saba_n" -lt "$WIP_SABA" ] || { echo "SA/BA at WIP ($WIP_SABA) — no more Ready for Work→SA/BA pulls"; break; }
               NUM=$(echo "$item" | jq -r '.number'); ID=$(echo "$item" | jq -r '.item_id')
