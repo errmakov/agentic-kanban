@@ -1,6 +1,7 @@
 import { Header } from '@/components/Header';
 import { Wall } from '@/components/Wall';
 import { BreakCountdown } from '@/components/BreakCountdown';
+import { ReactionBar } from '@/components/ReactionBar';
 import { Footer } from '@/components/Footer';
 
 export default function Home() {
@@ -10,6 +11,7 @@ export default function Home() {
       <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-12">
         <Wall />
         <BreakCountdown />
+        <ReactionBar />
       </main>
       <Footer />
     </div>
