@@ -35,3 +35,23 @@ test('countdown timer: shows Time\'s up! when timer expires', async ({ page, req
   await expect(page.getByText(/time's up!/i)).toBeVisible({ timeout: 5000 });
   await request.post('/api/countdown', { data: { action: 'reset' } });
 });
+
+test('reaction bar renders all 5 emoji buttons', async ({ page }) => {
+  await page.goto('/');
+  const group = page.getByRole('group', { name: 'Emoji reactions' });
+  await expect(group).toBeVisible();
+  await expect(group.getByRole('button')).toHaveCount(5);
+});
+
+test('clicking a reaction button increments its count', async ({ page }) => {
+  await page.goto('/');
+  const firstButton = page.getByRole('group', { name: 'Emoji reactions' }).getByRole('button').first();
+  await expect(firstButton).toBeVisible();
+
+  const countText = await firstButton.locator('span').last().textContent();
+  const initialCount = parseInt(countText ?? '0', 10);
+
+  await firstButton.click();
+
+  await expect(firstButton.locator('span').last()).toHaveText(String(initialCount + 1));
+});
