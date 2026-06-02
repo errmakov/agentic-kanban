@@ -41,6 +41,10 @@ env:
   PROJECT_OWNER: ${{ vars.PROJECT_OWNER }}
   # Static project ids for move-issue.sh (skips its 2 GraphQL metadata reads); see cache-project-meta.sh.
   FW_PROJECT_META: ${{ vars.FW_PROJECT_META }}
+  # Cap on board items requested per poll. GraphQL cost is ~1/item REQUESTED, so a
+  # smaller cap = cheaper polls. MUST stay >= board size. Unset → poll-board defaults
+  # to 50. For the ~12-card demo, set repo var BOARD_LIMIT=20 to cut poll cost ~5x.
+  BOARD_LIMIT: ${{ vars.BOARD_LIMIT }}
   # WIP limits per silo (whole-silo: stage:doing + stage:done count together).
   # Set as repo variables; the dispatcher is the enforcement point (GitHub's own
   # column limits are only advisory). Edit these live to demo throughput changes.
