@@ -1,4 +1,5 @@
 import { Countdown } from './Countdown';
+import { FeedbackWidget } from './FeedbackWidget';
 
 export function Wall() {
   return (
@@ -11,6 +12,7 @@ export function Wall() {
         implemented by an AI agent pulling a card across the board.
       </p>
       <Countdown />
+      <FeedbackWidget />
     </section>
   );
 }
