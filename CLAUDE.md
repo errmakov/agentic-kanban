@@ -45,20 +45,67 @@ npm run typecheck    # TypeScript type checking (tsc --noEmit)
 ```
 app/
   layout.tsx         # Root layout (html/body, global metadata)
-  page.tsx           # Home page — composes Header / Wall / Footer
+  page.tsx           # Home — Header / Wall / <FeatureSlot> / Footer   (shared; do NOT edit)
   globals.css        # Tailwind entry + CSS variables
   api/
     health/route.ts  # GET /api/health -> { status: "ok" } (deploy smoke target)
-components/           # Presentational React components (one per file)
-  Header.tsx
+components/           # Shared layout (do NOT edit) + the slot renderer
+  Header.tsx          # renders the "header" slot
   Wall.tsx
-  Footer.tsx
+  Footer.tsx          # renders the "footer" slot
+  FeatureSlot.tsx     # renders every feature registered for a slot
+features/             # ←— YOUR FEATURE GOES HERE (one folder per feature)
+  types.ts            # the Feature interface (id, slot, order, Component)
+  registry.ts         # the ONE shared file you append to (append-only)
+  <feature>/index.tsx # your feature: own component(s), default-exporting a Feature
 e2e/                  # Playwright specs
 ```
 
-New features are **additive**: add a new component under `components/`, render it from
-`app/page.tsx` (usually inside `<Wall />` or the header/footer), and keep it isolated so
-parallel features don't collide.
+### Adding a feature (IMPORTANT — this is how we avoid deploy merge conflicts)
+
+Features are **additive and isolated** so many agents build in parallel without
+colliding. The layout exposes three **slots** — `header`, `main`, `footer` — and renders
+whatever is registered for each. You add a feature by dropping a file in `features/` and
+**appending** it to the registry; you never edit a shared layout file.
+
+1. Create `features/<your-feature>/index.tsx` (kebab-case folder), default-exporting a `Feature`:
+
+   ```tsx
+   'use client'; // only if you use state/effects
+   import type { Feature } from '@/features/types';
+
+   function AttendeeCounter() {
+     return <span className="text-sm font-medium">👀 128 watching</span>;
+   }
+
+   const feature: Feature = {
+     id: 'attendee-counter',     // unique, kebab-case
+     slot: 'header',             // 'header' | 'main' | 'footer'
+     order: 100,                 // optional; lower renders first
+     Component: AttendeeCounter,
+   };
+   export default feature;
+   ```
+
+2. Register it in `features/registry.ts` by APPENDING one import and one array entry:
+
+   ```ts
+   import attendeeCounter from './attendee-counter';
+   // ...
+   export const features: Feature[] = [
+     attendeeCounter,
+   ];
+   ```
+
+3. Server state goes in YOUR OWN route — `app/api/<your-feature>/route.ts` (persist a JSON
+   file under `process.env.DATA_DIR`, as below). Never add it to a shared route.
+
+4. Add a unit test beside your feature: `features/<your-feature>/<Component>.test.tsx`
+   (see `components/Wall.test.tsx` for the pattern).
+
+**Hard rule:** the ONLY shared file you may edit is `features/registry.ts`, and only by
+appending. Do **NOT** edit `app/page.tsx`, `components/Header.tsx`, `Wall.tsx`, `Footer.tsx`,
+or `FeatureSlot.tsx` — editing those is what causes the deploy-time merge conflicts.
 
 ## Pipeline (pull system)
 
@@ -102,8 +149,11 @@ When working as an automated agent:
 
 1. **Read this file first.**
 2. **Implement exactly what the issue asks — nothing more.** One issue = one small feature.
-3. Put new UI in its own component under `components/` and wire it into `app/page.tsx`.
-4. **Add a Vitest unit test** for any new component (see `components/Wall.test.tsx` for the pattern).
+3. Put your feature in its OWN folder under `features/` and register it (append-only) in
+   `features/registry.ts` — see **"Adding a feature"**. **Never edit the shared layout**
+   (`app/page.tsx`, `components/Header.tsx`/`Wall.tsx`/`Footer.tsx`/`FeatureSlot.tsx`); that
+   causes deploy merge conflicts.
+4. **Add a Vitest unit test** for your feature (see `components/Wall.test.tsx` for the pattern).
 5. Run `npm run typecheck` and `npm run build` before finishing; fix what you broke.
 6. **No external DB server/ORM, no new heavy dependencies.** Lightweight persistence is fine: a JSON file under `process.env.DATA_DIR`. Prefer the platform and a few lines of code.
 7. **Never commit secrets or `.env` files.**
