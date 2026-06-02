@@ -1,4 +1,5 @@
 name: "Agent: Development"
+run-name: "Agent: Development · #${{ inputs.issue_number }}"
 
 # Implements the feature described in the issue, guided by SA/BA analysis.
 # Creates a feature branch, writes code, creates a draft PR, moves to Test.

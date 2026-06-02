@@ -52,9 +52,14 @@ find_item() {
   return 1
 }
 
-# Ensure the tracking label exists (idempotent).
+# Ensure the tracking labels exist (idempotent).
 gh label create demo-backlog --repo "${OWNER}/${REPO}" \
   --color BFD4F2 --description "FactoryWall demo backlog card" 2>/dev/null || true
+# Board-visible flag: a card that a deploy batch SKIPPED on a merge conflict and that
+# needs another deploy kick to ship (otherwise it's indistinguishable from a freshly
+# approved card just waiting in Ready to Deploy).
+gh label create redeploy-required --repo "${OWNER}/${REPO}" \
+  --color FBCA04 --description "Skipped on a deploy merge conflict — needs another deploy to ship" 2>/dev/null || true
 
 # "title|one-line intent"
 BACKLOG=(

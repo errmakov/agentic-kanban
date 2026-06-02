@@ -1,4 +1,5 @@
 name: "Agent: Resolve (merge-conflict swarm)"
+run-name: "Agent: Resolve · #${{ inputs.issue_number }}"
 
 # Dispatched by agent-deploy when an approved PR can't be squash-merged because the
 # feature branch conflicts with master (usually parallel features editing the same

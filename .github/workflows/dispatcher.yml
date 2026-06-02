@@ -16,8 +16,10 @@ name: Dispatcher
 # A `concurrency` group serialises ticks so two overlapping runs can't over-pull.
 
 on:
-  # schedule:
-  #   - cron: '*/5 * * * *'   # optional safety heartbeat (5-min floor)
+  schedule:
+    - cron: '*/5 * * * *'   # safety heartbeat: self-resumes the line after any stall
+                            # (e.g. a GraphQL rate-limit). 5-min floor; self-kicks drive
+                            # the fast cadence, this just guarantees recovery.
   workflow_dispatch:
     inputs:
       dry_run:
@@ -52,15 +54,26 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Poll project board
+        id: poll
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
           chmod +x ./scripts/poll-board.sh
-          ./scripts/poll-board.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" > board-state.json
-          echo "--- board state ---"
-          jq -r '.[] | "  #\(.number) [\(.status)] {\(.labels | join(","))}"' board-state.json || cat board-state.json
+          # The board read is GraphQL-only (Projects V2). If the GraphQL bucket is
+          # exhausted, DON'T fail the tick — skip it. The next self-kick or the 5-min
+          # cron heartbeat retries once the bucket resets, so the line self-recovers
+          # instead of stranding behind a red X.
+          if ./scripts/poll-board.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" > board-state.json 2> poll-err.txt; then
+            echo "--- board state ---"
+            jq -r '.[] | "  #\(.number) [\(.status)] {\(.labels | join(","))}"' board-state.json || cat board-state.json
+          else
+            echo "::warning::Board poll failed (likely GraphQL rate limit) — skipping this tick; a later tick/heartbeat will retry."
+            sed 's/^/poll-board: /' poll-err.txt >&2 || true
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Orchestrate — blocker swarm + WIP-gated pulls
+        if: steps.poll.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
@@ -218,6 +231,7 @@ jobs:
           fi
 
       - name: Notify for "Human Review" items
+        if: steps.poll.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

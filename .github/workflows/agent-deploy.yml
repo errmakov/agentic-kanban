@@ -86,6 +86,9 @@ jobs:
             else
               echo "::warning::Merge failed for #${ISSUE} (conflict) — dispatching agent-resolve (stays in Ready to Deploy)"
               FAILED="$FAILED $ISSUE"
+              # Flag it on the board so it's not mistaken for a freshly-approved card: it
+              # was skipped on a conflict and needs ANOTHER deploy once resolve fixes it.
+              gh api --method POST "repos/${{ github.repository }}/issues/$ISSUE/labels" -f "labels[]=redeploy-required" >/dev/null 2>&1 || true
               gh api --method POST "repos/${{ github.repository }}/actions/workflows/agent-resolve.yml/dispatches" -f ref=master -f "inputs[issue_number]=$ISSUE" >/dev/null 2>&1 || true
             fi
           done < <(jq -c '.[]' ready.json)
@@ -243,15 +246,18 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
           chmod +x ./scripts/move-issue.sh
+          # One board scan reused for every merged issue (was one GraphQL scan PER issue).
+          BOARD_JSON=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --limit 500)
           for ISSUE in ${{ steps.merge.outputs.merged }}; do
-            ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --limit 500 \
-              | jq -r --argjson num "$ISSUE" '.items[] | select(.content.number == $num) | .id')
+            ITEM_ID=$(jq -r --argjson num "$ISSUE" '.items[] | select(.content.number == $num) | .id' <<<"$BOARD_JSON")
             if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
               ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Done"
             fi
             gh issue close "$ISSUE" --repo "${{ github.repository }}" \
               --comment "✅ **Batch-deployed to production.**" 2>/dev/null || true
             gh api --method DELETE "repos/${{ github.repository }}/issues/$ISSUE/labels/review-notified" >/dev/null 2>&1 || true
+            # It shipped — clear the redeploy flag (set on a prior conflict-skip round, if any).
+            gh api --method DELETE "repos/${{ github.repository }}/issues/$ISSUE/labels/redeploy-required" >/dev/null 2>&1 || true
           done
 
       - name: On failure — alert (items stay in Ready to Deploy for re-run)

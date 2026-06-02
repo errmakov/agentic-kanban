@@ -1,4 +1,5 @@
 name: "Agent: SA/BA Analysis"
+run-name: "Agent: SA/BA · #${{ inputs.issue_number }}"
 
 # Performs systems/business analysis on an issue.
 # Reads the issue + codebase, posts an analysis comment, moves to Dev.

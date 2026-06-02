@@ -1,4 +1,5 @@
 name: "Agent: Fix (blocker swarm)"
+run-name: "Agent: Fix · #${{ inputs.issue_number }}"
 
 # The "swarm". Dispatched by the dispatcher on a card flagged `blocker` (e.g. tests
 # failing in Test). It fixes the code in place — the card never moves backward — and
@@ -177,26 +178,21 @@ jobs:
           set -e
           echo "test_exit=$TEST_EXIT" >> "$GITHUB_OUTPUT"
 
-      - name: Green → clear blocker, push to Human Review
+      - name: Green → clear blocker, hand the move to the dispatcher
         if: ${{ fromJSON(steps.attempt.outputs.attempt) <= fromJSON(env.MAX_FIX) && steps.verify.outputs.test_exit == '0' }}
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
-          chmod +x ./scripts/move-issue.sh
-
           gh issue comment "${{ inputs.issue_number }}" \
             --repo "${{ github.repository }}" \
-            --body "✅ **Swarm fixed it** (attempt ${{ steps.attempt.outputs.attempt }}). Tests green — clearing \`blocker\`, pushing to Human Review."
+            --body "✅ **Swarm fixed it** (attempt ${{ steps.attempt.outputs.attempt }}). Tests green — clearing \`blocker\` and marking \`stage:done\`; the dispatcher moves it Test → Human Review on its next tick."
 
-          ITEM_ID=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --limit 500 \
-            | jq -r --argjson num "${{ inputs.issue_number }}" '.items[] | select(.content.number == $num) | .id')
-          if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
-            ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Human Review"
-          fi
-
+          # Don't scan the board / move the card here (a GraphQL scan + cold move that can
+          # strand on a rate-limit). Clear blocker + mark stage:done via REST and let the
+          # dispatcher's Test→Human Review pull own the move — same pattern as agent-test.
           gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/blocker" >/dev/null 2>&1 || true
           gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:doing" >/dev/null 2>&1 || true
-          gh api --method DELETE "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels/stage:done" >/dev/null 2>&1 || true
+          gh api --method POST "repos/${{ github.repository }}/issues/${{ inputs.issue_number }}/labels" -f "labels[]=stage:done" >/dev/null 2>&1 || true
 
           gh api --method POST "repos/${{ github.repository }}/actions/workflows/dispatcher.yml/dispatches" -f ref=master >/dev/null 2>&1 || true
 
