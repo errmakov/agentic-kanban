@@ -1,3 +1,4 @@
+import { ShareButton } from './ShareButton';
 import { ThemeToggle } from './ThemeToggle';
 
 export function Header() {
@@ -10,7 +11,10 @@ export function Header() {
             The live session companion — built on stage, one feature at a time.
           </p>
         </div>
-        <ThemeToggle />
+        <div className="flex items-center gap-2">
+          <ShareButton />
+          <ThemeToggle />
+        </div>
       </div>
     </header>
   );

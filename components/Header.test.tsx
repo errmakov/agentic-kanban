@@ -19,4 +19,11 @@ describe('Header', () => {
       screen.getByRole('button', { name: /toggle dark mode/i }),
     ).toBeInTheDocument();
   });
+
+  it('renders the ShareButton', () => {
+    render(<Header />);
+    expect(
+      screen.getByRole('button', { name: /copy session link/i }),
+    ).toBeInTheDocument();
+  });
 });
