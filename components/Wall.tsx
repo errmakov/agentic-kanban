@@ -1,3 +1,4 @@
+import { ReactionBar } from './ReactionBar';
 import { Countdown } from './Countdown';
 
 export function Wall() {
@@ -10,6 +11,7 @@ export function Wall() {
         This page is built live during the session. Each feature you see appear was
         implemented by an AI agent pulling a card across the board.
       </p>
+      <ReactionBar />
       <Countdown />
     </section>
   );
