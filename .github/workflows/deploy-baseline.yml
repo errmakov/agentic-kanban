@@ -8,6 +8,11 @@ name: "Deploy: baseline (no board)"
 
 on:
   workflow_dispatch:
+    inputs:
+      wipe_data:
+        description: 'Wipe the persisted data volume for a clean-slate baseline'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -84,6 +89,16 @@ jobs:
             cd ${{ vars.DEPLOY_PATH }}
 
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # Rehearsals are independent: a baseline deploy is a clean slate, so by
+            # default drop the persisted data volume (reactions/timer/tallies) before
+            # bringing the app up. `down -v` removes the compose-declared
+            # factorywall-data volume; `up -d` then recreates it empty.
+            # Set wipe_data=false to keep the volume (e.g. mid-rehearsal manual restore).
+            if [ "${{ inputs.wipe_data }}" != "false" ]; then
+              echo "Wiping data volume for a clean baseline..."
+              docker compose -f docker-compose.prod.yml down -v --remove-orphans 2>/dev/null || true
+            fi
 
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d

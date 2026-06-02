@@ -10,8 +10,9 @@
 #   3. delete all agent/issue-* remote branches
 #   4. close the previous demo-backlog issues and remove their board items
 #   5. re-seed a fresh backlog into Todo
-#   6. trigger the `deploy-baseline` workflow to restore the VPS to the clean app
-#      (skip with RESET_SKIP_DEPLOY=1)
+#   6. trigger the `deploy-baseline` workflow to restore the VPS to the clean app AND
+#      wipe the persisted data volume — rehearsals are independent, so reactions/timer/
+#      tallies must start empty (skip the whole deploy with RESET_SKIP_DEPLOY=1)
 #
 # Requires: gh authenticated (repo + project scopes), git remote `origin`,
 # branch protection on `master` OFF (or a PAT that can force-push).
@@ -88,7 +89,7 @@ if [ "${RESET_SKIP_DEPLOY:-0}" = "1" ]; then
   echo "    Restore later: gh workflow run deploy-baseline.yml --ref master --repo ${OWNER}/${REPO}"
 else
   echo "==> Restoring the VPS to the clean baseline app (deploy-baseline)..."
-  if gh workflow run deploy-baseline.yml --ref master --repo "${OWNER}/${REPO}"; then
+  if gh workflow run deploy-baseline.yml --ref master --repo "${OWNER}/${REPO}" -f wipe_data=true; then
     echo "    Triggered. Watch it:"
     echo "    gh run watch \$(gh run list -w deploy-baseline.yml -L1 --repo ${OWNER}/${REPO} --json databaseId -q '.[0].databaseId') --repo ${OWNER}/${REPO}"
   else
