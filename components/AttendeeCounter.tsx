@@ -44,7 +44,7 @@ export function AttendeeCounter() {
   }, []);
 
   return (
-    <span className="text-sm text-neutral-500">
+    <span className="mt-3 block text-sm text-neutral-500">
       {count === null ? '—' : `${count} watching`}
     </span>
   );
