@@ -9,4 +9,11 @@ describe('Wall', () => {
       screen.getByRole('heading', { name: /welcome to the workshop/i }),
     ).toBeInTheDocument();
   });
+
+  it('renders the FAQ accordion section', () => {
+    render(<Wall />);
+    expect(
+      screen.getByRole('heading', { name: /frequently asked questions/i }),
+    ).toBeInTheDocument();
+  });
 });
