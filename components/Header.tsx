@@ -1,3 +1,4 @@
+import { AttendeeCounter } from './AttendeeCounter';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
 export function Header() {
@@ -10,7 +11,10 @@ export function Header() {
             The live session companion — built on stage, one feature at a time.
           </p>
         </div>
-        <ThemeToggle />
+        <div className="flex items-center gap-3">
+          <AttendeeCounter />
+          <ThemeToggle />
+        </div>
       </div>
     </header>
   );
