@@ -1,3 +1,5 @@
+import { AttendeeCounter } from './AttendeeCounter';
+
 export function Header() {
   return (
     <header className="border-b border-neutral-200">
@@ -6,6 +8,7 @@ export function Header() {
         <p className="text-sm text-neutral-500">
           The live session companion — built on stage, one feature at a time.
         </p>
+        <AttendeeCounter />
       </div>
     </header>
   );
