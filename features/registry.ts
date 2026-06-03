@@ -21,4 +21,9 @@ export const features: Feature[] = [
   // ── registered features (append one per feature) ──
   // attendeeCounter,
   themeToggle,
+import attendeeCounter from './attendee-counter';
+
+export const features: Feature[] = [
+  // ── registered features (append one per feature) ──
+  attendeeCounter,
 ];
