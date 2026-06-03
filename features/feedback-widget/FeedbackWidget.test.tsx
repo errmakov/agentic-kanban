@@ -89,6 +89,22 @@ describe('FeedbackWidget', () => {
     await waitFor(() => expect(screen.getByText('5')).toBeInTheDocument());
   });
 
+  it('silently recovers when GET fetch fails', async () => {
+    vi.mocked(global.fetch).mockRejectedValue(new Error('Network error'));
+
+    render(<FeedbackWidget />);
+
+    // Buttons render without crashing; counts stay at zero
+    expect(screen.getAllByRole('button')).toHaveLength(2);
+    await waitFor(() => {
+      const buttons = screen.getAllByRole('button');
+      expect(buttons).toHaveLength(2);
+    });
+    // Both counts remain 0 after failed GET
+    const zeros = screen.getAllByText('0');
+    expect(zeros).toHaveLength(2);
+  });
+
   it('disables buttons while a request is in-flight', async () => {
     let resolvePost!: (r: Response) => void;
     vi.mocked(global.fetch).mockImplementation((_url, init) => {
