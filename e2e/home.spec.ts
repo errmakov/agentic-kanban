@@ -20,3 +20,12 @@ test('share button appears in the header and copies to clipboard on click', asyn
   await shareButton.click();
   await expect(page.getByRole('button', { name: /copied!/i })).toBeVisible();
 });
+
+test('speaker bio cards section is visible with names and roles', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: /speakers/i })).toBeVisible();
+  await expect(page.getByText('Ada Lovelace')).toBeVisible();
+  await expect(page.getByText('Grace Hopper')).toBeVisible();
+  await expect(page.getByText('Alan Turing')).toBeVisible();
+  await expect(page.getByText('Keynote Speaker')).toBeVisible();
+});
