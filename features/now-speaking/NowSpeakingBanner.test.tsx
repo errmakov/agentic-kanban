@@ -57,6 +57,13 @@ describe('NowSpeakingBanner', () => {
     expect(container.querySelector('section')).toBeNull();
   });
 
+  it('renders the default title returned by the API when no session is active', async () => {
+    vi.stubGlobal('fetch', mockFetch('Live from the workshop'));
+    render(<Banner />);
+    expect(await screen.findByText('Live from the workshop')).toBeInTheDocument();
+    expect(await screen.findByText('Now Speaking')).toBeInTheDocument();
+  });
+
   it('exports the correct feature descriptor', () => {
     expect(nowSpeaking.id).toBe('now-speaking');
     expect(nowSpeaking.slot).toBe('main');
