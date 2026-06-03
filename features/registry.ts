@@ -15,12 +15,14 @@ import type { Feature } from './types';
 
 // ── feature imports (append one per feature) ──
 import attendeeCounter from './attendee-counter';
+import countdownTimer from './countdown-timer';
 import emojiReactionBar from './emoji-reaction-bar';
 import themeToggle from './theme-toggle';
 
 export const features: Feature[] = [
   // ── registered features (append one per feature) ──
   attendeeCounter,
+  countdownTimer,
   emojiReactionBar,
   themeToggle,
 ];
