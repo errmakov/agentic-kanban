@@ -48,4 +48,66 @@ describe('ThemeToggle', () => {
       screen.getByRole('button', { name: /switch to light mode/i }),
     ).toBeInTheDocument();
   });
+
+  it('restores a stored light preference on mount', () => {
+    document.documentElement.classList.add('dark');
+    localStorage.setItem('theme', 'light');
+    render(<ThemeToggle />);
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
+    expect(
+      screen.getByRole('button', { name: /switch to dark mode/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('defaults to dark when OS prefers dark and no stored preference', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({ matches: true }),
+    );
+    render(<ThemeToggle />);
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+    expect(
+      screen.getByRole('button', { name: /switch to light mode/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('stored preference takes precedence over OS preference', () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({ matches: true }),
+    );
+    localStorage.setItem('theme', 'light');
+    render(<ThemeToggle />);
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
+    expect(
+      screen.getByRole('button', { name: /switch to dark mode/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('ignores invalid values in localStorage and falls back to OS preference', () => {
+    localStorage.setItem('theme', 'invalid-value');
+    render(<ThemeToggle />);
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
+  });
+
+  it('handles localStorage unavailable gracefully', () => {
+    const originalGetItem = Storage.prototype.getItem;
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.getItem = vi.fn().mockImplementation(() => {
+      throw new Error('storage unavailable');
+    });
+    Storage.prototype.setItem = vi.fn().mockImplementation(() => {
+      throw new Error('storage unavailable');
+    });
+
+    render(<ThemeToggle />);
+    const button = screen.getByRole('button');
+    expect(button).toBeInTheDocument();
+
+    fireEvent.click(button);
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+
+    Storage.prototype.getItem = originalGetItem;
+    Storage.prototype.setItem = originalSetItem;
+  });
 });
