@@ -59,6 +59,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
+          # We merge PR branches LOCALLY (git merge), not via `gh pr merge --squash`.
+          # Why: the append-only feature registry (features/registry.ts) is union-merged
+          # via .gitattributes, so parallel feature registrations auto-resolve instead of
+          # conflicting. GitHub's squash button ignores .gitattributes, so the merge must
+          # happen here with real git. A genuine conflict in some OTHER file still falls
+          # back to redeploy-required + agent-resolve, exactly as before.
+          git config user.name "agentic-kanban[bot]"
+          git config user.email "agentic-kanban[bot]@users.noreply.github.com"
+          git fetch origin master
+          git checkout master
+          git reset --hard origin/master
+
           MERGED=""
           FAILED=""
           while read -r item; do
@@ -81,11 +93,15 @@ jobs:
             fi
 
             gh pr ready "$OPEN_PR" --repo "${{ github.repository }}" 2>/dev/null || true
-            if gh pr merge "$OPEN_PR" --repo "${{ github.repository }}" --squash --delete-branch --body "Batch-deployed for #${ISSUE}"; then
-              echo "Merged PR #${OPEN_PR} (issue #${ISSUE})"
+
+            # Local 3-way merge so .gitattributes (registry merge=union) applies.
+            git fetch origin "$BRANCH"
+            if git merge --no-ff -m "deploy: merge ${BRANCH} for #${ISSUE}" FETCH_HEAD; then
+              echo "Merged ${BRANCH} (issue #${ISSUE})"
               MERGED="$MERGED $ISSUE"
             else
-              echo "::warning::Merge failed for #${ISSUE} (conflict) — dispatching agent-resolve (stays in Ready to Deploy)"
+              echo "::warning::Real conflict for #${ISSUE} (beyond the union-merged registry) — dispatching agent-resolve (stays in Ready to Deploy)"
+              git merge --abort || true
               FAILED="$FAILED $ISSUE"
               # Flag it on the board so it's not mistaken for a freshly-approved card: it
               # was skipped on a conflict and needs ANOTHER deploy once resolve fixes it.
@@ -102,6 +118,11 @@ jobs:
             echo "::error::No PRs merged — aborting deploy."
             exit 1
           fi
+
+          # Publish all merges in one push. GitHub marks each merged PR as merged
+          # (its commits are now reachable from master); branches are cleaned by
+          # reset-rehearsal between runs.
+          git push origin master
 
       - name: Refresh master after merges
         id: refresh
