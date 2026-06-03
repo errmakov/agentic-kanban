@@ -169,7 +169,23 @@ jobs:
           TITLE=$(gh api "repos/$REPO/issues/$ISSUE" -q '.title' 2>/dev/null || echo "#$ISSUE")
           PR_URL=$(gh api "repos/$REPO/pulls?head=${{ github.repository_owner }}:agent/issue-$ISSUE&state=open" -q '.[0].html_url // ""')
 
-          # Build + boot the PR build so we screenshot exactly what's under review.
+          # Cumulative preview: merge whatever is already deployed (origin/master) into this
+          # branch so the album shows the wall AS IT WILL LOOK after this card ships — not the
+          # lone feature on a bare baseline. THROWAWAY + best-effort: this merge is never
+          # committed or pushed (the test code was already pushed in the step above, and
+          # agent-deploy does the real merge later). On conflict we abort and fall back to a
+          # branch-only screenshot — exactly today's behavior, no corruption.
+          git config user.name "agentic-kanban[bot]"
+          git config user.email "agentic-kanban[bot]@users.noreply.github.com"
+          git fetch origin master >/dev/null 2>&1 || true
+          if git merge --no-ff -m "preview: cumulative screenshot for #${ISSUE}" origin/master; then
+            echo "Preview = deployed features + this card."
+          else
+            git merge --abort || true
+            echo "::notice::Merge conflict with master — screenshotting this feature alone (resolved for real at deploy)."
+          fi
+
+          # Build + boot the (preview) build so we screenshot what shipping this card will look like.
           npm run build || { echo "build failed — skipping screenshots"; exit 0; }
           npx playwright install --with-deps chromium || npx playwright install chromium
 
