@@ -29,7 +29,11 @@ PROJECT="${3:?Usage: reset-rehearsal.sh <owner> <repo> <project_number>}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "==> Fetching refs..."
-git fetch origin --tags --prune
+# --force is REQUIRED: a plain `git fetch --tags` will NOT move a tag we already
+# have locally, so a stale local `baseline` tag would make the master reset below a
+# silent no-op ("Everything up-to-date") and leave the previous run's features on
+# master. --force makes the local baseline tag always match origin.
+git fetch origin --force --tags --prune
 
 # 0. Safety: baseline tag must exist.
 if ! git ls-remote --tags origin baseline | grep -q 'refs/tags/baseline'; then
@@ -47,6 +51,17 @@ fi
 # 2. Force-reset master to baseline.
 echo "==> Force-resetting master to baseline..."
 git push --force origin "refs/tags/baseline:refs/heads/master"
+
+# 2a. VERIFY the reset actually took. The push above can report "Everything
+#     up-to-date" and leave a feature-laden master in place; never reseed on top
+#     of an un-reset master (that produces duplicate, already-implemented cards).
+git fetch origin master >/dev/null 2>&1
+if [ "$(git rev-parse origin/master)" != "$(git rev-parse "refs/tags/baseline")" ]; then
+  echo "ERROR: master ($(git rev-parse --short origin/master)) != baseline ($(git rev-parse --short refs/tags/baseline)) after reset."
+  echo "Master was NOT reset — aborting before reseeding. Check branch protection / push perms, then retry."
+  exit 1
+fi
+echo "    master is now at baseline ($(git rev-parse --short refs/tags/baseline)) — clean scaffold confirmed."
 
 # 3. Delete agent feature branches.
 echo "==> Deleting agent/issue-* branches..."
