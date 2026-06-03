@@ -29,6 +29,17 @@ fmt_dur() {  # seconds -> "Xm YYs"
   printf '%dm%02ds' "$((s / 60))" "$((s % 60))"
 }
 
+median() {  # numbers as args -> median value (numeric). No args -> empty.
+  [ "$#" -eq 0 ] && return 0
+  printf '%s\n' "$@" | sort -n | awk '
+    { a[NR] = $1 }
+    END {
+      if (NR == 0) exit
+      if (NR % 2) printf "%s", a[(NR + 1) / 2]
+      else        printf "%s", (a[NR / 2] + a[NR / 2 + 1]) / 2
+    }'
+}
+
 # 1) Harvest FW_COST lines from recent completed runs of the agent workflows.
 COST_TMP=$(mktemp)
 trap 'rm -f "$COST_TMP"' EXIT
@@ -62,6 +73,8 @@ total_usd=0
 total_lead=0
 shipped=0
 rows=""
+lead_list=""   # lead-time seconds, shipped cards only (for median)
+cost_list=""   # spend usd, shipped cards only (for median)
 
 for n in $NUMS; do
   TITLE=$(gh issue view "$n" --repo "$SLUG" --json title -q '.title' 2>/dev/null \
@@ -90,6 +103,8 @@ for n in $NUMS; do
     LEAD_CELL=$(fmt_dur "$LEAD")
     total_lead=$((total_lead + LEAD))
     shipped=$((shipped + 1))
+    lead_list="$lead_list $LEAD"
+    cost_list="$cost_list $USD"
   fi
 
   USDF=$(printf '%.2f' "$USD" 2>/dev/null || echo "$USD")
@@ -100,8 +115,15 @@ done
 
 TOTAL_USDF=$(printf '%.2f' "$total_usd" 2>/dev/null || echo "$total_usd")
 AVG_CELL="—"
+MED_LEAD_CELL="—"
+MED_COST_CELL="—"
 if [ "$shipped" -gt 0 ]; then
   AVG_CELL="avg $(fmt_dur "$((total_lead / shipped))")"
+  # Medians over shipped cards only (unshipped $0.00 / — rows excluded).
+  med_lead=$(median $lead_list)
+  MED_LEAD_CELL="med $(fmt_dur "$(printf '%.0f' "$med_lead")")"
+  med_cost=$(median $cost_list)
+  MED_COST_CELL="\$$(printf '%.2f' "$med_cost")"
 fi
 
 echo "## FactoryWall pipeline stats — ${SLUG}"
@@ -110,5 +132,7 @@ echo "| # | Card | Cost | Lead time |"
 echo "|---|------|------|-----------|"
 printf '%s' "$rows"
 echo "| | **${shipped} shipped** | **\$${TOTAL_USDF}** | **${AVG_CELL}** |"
+echo "| | **median (shipped)** | **${MED_COST_CELL}** | **${MED_LEAD_CELL}** |"
 echo ""
 echo "_Cost = FW_COST log lines (every stage + retry). Lead time = first \`stage:doing\` → first \`approved\`._"
+echo "_Average & median are over shipped cards only; unshipped (\$0.00 / —) rows are excluded._"
