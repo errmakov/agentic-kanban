@@ -7,13 +7,17 @@ export const dynamic = 'force-dynamic';
 const dataDir = process.env.DATA_DIR ?? './data';
 const dataFile = path.join(dataDir, 'now-speaking.json');
 
+// Shown until a session title is set, so the banner is visible on a fresh deploy.
+const DEFAULT_TITLE = 'Live from the workshop';
+
 async function readTitle(): Promise<string> {
   try {
     const raw = await fs.readFile(dataFile, 'utf-8');
     const parsed = JSON.parse(raw) as { title?: unknown };
-    return typeof parsed.title === 'string' ? parsed.title : '';
+    const title = typeof parsed.title === 'string' ? parsed.title.trim() : '';
+    return title || DEFAULT_TITLE;
   } catch {
-    return '';
+    return DEFAULT_TITLE;
   }
 }
 
