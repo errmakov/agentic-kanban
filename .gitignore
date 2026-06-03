@@ -18,3 +18,7 @@ coverage/
 playwright-report/
 test-results/
 .playwright/
+
+# Auto-generated feature registry — rebuilt from features/*/ at build time (scripts/gen-registry.mjs).
+# Never committed: that is what keeps parallel feature PRs from ever colliding on it.
+features/registry.generated.ts

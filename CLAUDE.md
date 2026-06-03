@@ -56,17 +56,17 @@ components/           # Shared layout (do NOT edit) + the slot renderer
   FeatureSlot.tsx     # renders every feature registered for a slot
 features/             # ←— YOUR FEATURE GOES HERE (one folder per feature)
   types.ts            # the Feature interface (id, slot, order, Component)
-  registry.ts         # the ONE shared file you append to (append-only)
   <feature>/index.tsx # your feature: own component(s), default-exporting a Feature
+                      # the registry is AUTO-GENERATED from these folders — no shared file to edit
 e2e/                  # Playwright specs
 ```
 
-### Adding a feature (IMPORTANT — this is how we avoid deploy merge conflicts)
+### Adding a feature (IMPORTANT — this is how we build in parallel without conflicts)
 
 Features are **additive and isolated** so many agents build in parallel without
 colliding. The layout exposes three **slots** — `header`, `main`, `footer` — and renders
-whatever is registered for each. You add a feature by dropping a file in `features/` and
-**appending** it to the registry; you never edit a shared layout file.
+whatever is discovered for each. A feature is **just a folder**: you never edit a shared
+file, so parallel features can never collide on one.
 
 1. Create `features/<your-feature>/index.tsx` (kebab-case folder), default-exporting a `Feature`:
 
@@ -87,30 +87,22 @@ whatever is registered for each. You add a feature by dropping a file in `featur
    export default feature;
    ```
 
-   > This one file is all you need — keep the `'use client'` directive (when you use
-   > state/effects) **and** the `Feature` descriptor in the same `index.tsx`. The slot
-   > renderer (`components/FeatureSlot.tsx`) runs on the client, so interactive features
-   > render correctly; you never split the component out or touch a layout file.
+   > This one file is all you need. Keep `'use client'` (when you use state/effects) and the
+   > `Feature` descriptor together in `index.tsx`. **There is no registration step** — the
+   > build auto-discovers every `features/<name>/index.tsx` (via `scripts/gen-registry.mjs`,
+   > which runs on dev/build/typecheck/test) and the slot renderer places it by `slot` +
+   > `order`. The slot renderer is a client component, so interactive features render fine.
 
-2. Register it in `features/registry.ts` by APPENDING one import and one array entry:
-
-   ```ts
-   import attendeeCounter from './attendee-counter';
-   // ...
-   export const features: Feature[] = [
-     attendeeCounter,
-   ];
-   ```
-
-3. Server state goes in YOUR OWN route — `app/api/<your-feature>/route.ts` (persist a JSON
+2. Server state goes in YOUR OWN route — `app/api/<your-feature>/route.ts` (persist a JSON
    file under `process.env.DATA_DIR`, as below). Never add it to a shared route.
 
-4. Add a unit test beside your feature: `features/<your-feature>/<Component>.test.tsx`
+3. Add a unit test beside your feature: `features/<your-feature>/<Component>.test.tsx`
    (see `components/Wall.test.tsx` for the pattern).
 
-**Hard rule:** the ONLY shared file you may edit is `features/registry.ts`, and only by
-appending. Do **NOT** edit `app/page.tsx`, `components/Header.tsx`, `Wall.tsx`, `Footer.tsx`,
-or `FeatureSlot.tsx` — editing those is what causes the deploy-time merge conflicts.
+**Hard rule:** a feature only ever creates files **inside its own `features/<id>/` folder**
+(plus its own `app/api/<id>/` route, if it needs server state). Do **NOT** edit any shared
+file — `app/page.tsx`, `components/Header.tsx`, `Wall.tsx`, `Footer.tsx`, `FeatureSlot.tsx`,
+or the generated registry. There is nothing to register; the build finds your folder.
 
 ## Pipeline (pull system)
 

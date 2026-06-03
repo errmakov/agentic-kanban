@@ -12,7 +12,7 @@
 // is small and interactive, so client-bundling it is the right tradeoff; it still
 // server-renders (SSR) normally, so there is no blank flash.
 //
-import { features } from '@/features/registry';
+import { features } from '@/features/registry.generated';
 import type { FeatureSlot as Slot } from '@/features/types';
 
 /**

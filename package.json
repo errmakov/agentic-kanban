@@ -4,13 +4,19 @@
   "private": true,
   "description": "FactoryWall — live session-companion app, built feature-by-feature by the agentic-kanban pipeline.",
   "scripts": {
+    "gen": "node scripts/gen-registry.mjs",
+    "predev": "npm run gen",
     "dev": "next dev",
+    "prebuild": "npm run gen",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "pretypecheck": "npm run gen",
     "typecheck": "tsc --noEmit",
+    "pretest": "npm run gen",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pretest:e2e": "npm run gen",
     "test:e2e": "playwright test"
   },
   "dependencies": {
