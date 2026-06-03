@@ -148,16 +148,18 @@ jobs:
         run: |
           BRANCH="${{ steps.branch.outputs.branch }}"
 
-          # Check if there are changes to commit
-          if git diff --quiet && git diff --cached --quiet; then
-            echo "::warning::No changes produced by the agent"
-            exit 1
-          fi
-
           git config user.name "agentic-kanban[bot]"
           git config user.email "agentic-kanban[bot]@users.noreply.github.com"
 
+          # Stage first, THEN check. `git diff` (unstaged) does NOT see brand-new untracked
+          # files, and an auto-discovered feature is ALL new files (its own folder, no shared
+          # edit). Staging first lets `git diff --cached` detect them, so a real feature is
+          # never mistaken for "no changes".
           git add -A
+          if git diff --cached --quiet; then
+            echo "::warning::No changes produced by the agent"
+            exit 1
+          fi
           git commit -m "$(cat <<'EOF'
           feat: implement #${{ inputs.issue_number }}
 
