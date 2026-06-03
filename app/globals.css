@@ -7,7 +7,24 @@
   --foreground: #111111;
 }
 
+.dark {
+  --background: #0f172a;
+  --foreground: #f1f5f9;
+}
+
 body {
   color: var(--foreground);
   background: var(--background);
+}
+
+/* Dark-mode overrides for shared components that use hardcoded Tailwind
+   neutrals (those files must not be edited — see CLAUDE.md). */
+.dark header,
+.dark footer {
+  border-color: #1e293b;
+}
+
+.dark .text-neutral-500,
+.dark .text-neutral-600 {
+  color: #94a3b8;
 }
