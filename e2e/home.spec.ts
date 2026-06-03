@@ -10,3 +10,13 @@ test('attendee counter shows watching indicator in header', async ({ page }) => 
   // The component renders "– watching" immediately as a placeholder before the first API response.
   await expect(page.getByText(/watching/)).toBeVisible();
 });
+
+test('share button appears in the header and copies to clipboard on click', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('/');
+  const shareButton = page.getByRole('button', { name: /share/i });
+  await expect(shareButton).toBeVisible();
+
+  await shareButton.click();
+  await expect(page.getByRole('button', { name: /copied!/i })).toBeVisible();
+});
