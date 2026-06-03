@@ -15,8 +15,10 @@ import type { Feature } from './types';
 
 // ── feature imports (append one per feature) ──
 // import attendeeCounter from './attendee-counter';
+import emojiReactions from './emoji-reactions';
 
 export const features: Feature[] = [
   // ── registered features (append one per feature) ──
   // attendeeCounter,
+  emojiReactions,
 ];
