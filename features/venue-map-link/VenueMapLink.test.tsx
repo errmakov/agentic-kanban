@@ -25,15 +25,19 @@ describe('VenueMapLink', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
-  it('renders nothing when env var is not set', () => {
+  it('still renders when env var is not set, with href="#"', () => {
     render(<VenueMapLink />);
-    expect(screen.queryByRole('link')).toBeNull();
+    const link = screen.getByRole('link', { name: /venue map/i });
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveAttribute('href', '#');
   });
 
-  it('renders nothing when env var is an empty string', () => {
+  it('still renders when env var is an empty string, with href="#"', () => {
     process.env.NEXT_PUBLIC_VENUE_MAP_URL = '';
     render(<VenueMapLink />);
-    expect(screen.queryByRole('link')).toBeNull();
+    const link = screen.getByRole('link', { name: /venue map/i });
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveAttribute('href', '#');
   });
 });
 

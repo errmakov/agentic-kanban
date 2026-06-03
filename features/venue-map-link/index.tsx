@@ -1,8 +1,7 @@
 import type { Feature } from '@/features/types';
 
 export function VenueMapLink() {
-  const url = process.env.NEXT_PUBLIC_VENUE_MAP_URL;
-  if (!url) return null;
+  const url = process.env.NEXT_PUBLIC_VENUE_MAP_URL || '#';
 
   return (
     <a
