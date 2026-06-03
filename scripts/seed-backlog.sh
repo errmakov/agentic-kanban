@@ -67,7 +67,7 @@ BACKLOG=(
   "Show a live attendee counter in the header|Display a number in the header representing how many people are viewing the wall."
   "Add an emoji reaction bar to the wall|Let visitors tap emoji reactions on the wall and see the running counts. The counts are shared across visitors and must survive a page reload and a redeploy (persist them server-side)."
   "Add a shared countdown timer|Let any visitor start a countdown: tap a +Countdown control, set minutes and seconds (MM:SS, up to 99:59) and start it. The running countdown is shared — every connected visitor sees the same timer ticking down in real time, and it survives a page reload and a redeploy (persist it server-side). When it reaches zero, show a clear 'Time's up' state."
-  "Add a now-speaking banner|Show a banner naming the session that is currently on."
+  "Add a now-speaking banner|Show a banner naming the session currently on. DERIVE it client-side from a small built-in schedule (hardcode a list of start times + titles in the feature) and the current time — pick the session whose start time most recently passed; before the first one, show the first upcoming session. No server data, no API, no manual input — it computes itself from the clock so it renders correctly everywhere."
   "Show the day's agenda as a list|Display the day's agenda as a simple list of sessions and times."
   "Add speaker bio cards with ratings|Show a few speaker bio cards (name, role, short bio). Give EACH speaker card its own thumbs up / thumbs down rating, with per-speaker tallies persisted server-side so they survive reloads and redeploys."
   "Add a share-this-session button|Add a button that copies the current page link to the clipboard."

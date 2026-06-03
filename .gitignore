@@ -22,3 +22,9 @@ test-results/
 # Auto-generated feature registry — rebuilt from features/*/ at build time (scripts/gen-registry.mjs).
 # Never committed: that is what keeps parallel feature PRs from ever colliding on it.
 features/registry.generated.ts
+
+# Runtime data store (counters, timer, reactions, etc.) — written under $DATA_DIR at runtime,
+# persisted in the VPS volume. Never commit it: a committed seed shows up only in the volumeless
+# build (review screenshots) and is shadowed by the live volume, so it misleads. Features must
+# render a sensible empty/derived state when there is no data.
+data/
