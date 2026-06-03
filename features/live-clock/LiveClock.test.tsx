@@ -9,6 +9,7 @@ describe('LiveClock', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -35,6 +36,20 @@ describe('LiveClock', () => {
     const { unmount } = render(<LiveClock />);
     unmount();
     expect(clearIntervalSpy).toHaveBeenCalled();
+  });
+
+  it('zero-pads single-digit hours, minutes, and seconds', () => {
+    vi.setSystemTime(new Date(2026, 5, 3, 1, 2, 3));
+    render(<LiveClock />);
+    expect(screen.getByText('01:02:03')).toBeInTheDocument();
+  });
+
+  it('sets the dateTime attribute to the ISO string of the current time', () => {
+    const now = new Date(2026, 5, 3, 14, 5, 9);
+    vi.setSystemTime(now);
+    render(<LiveClock />);
+    const el = screen.getByRole('time');
+    expect(el.getAttribute('dateTime')).toBe(now.toISOString());
   });
 });
 
