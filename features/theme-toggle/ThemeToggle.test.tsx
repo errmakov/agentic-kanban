@@ -33,4 +33,35 @@ describe('ThemeToggle', () => {
     render(<ThemeToggle />);
     expect(document.documentElement.classList.contains('dark')).toBe(true);
   });
+
+  it('defaults to light mode when no localStorage key is set', () => {
+    render(<ThemeToggle />);
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
+  });
+
+  it('has an accessible aria-label', () => {
+    render(<ThemeToggle />);
+    const button = screen.getByRole('button');
+    expect(button).toHaveAttribute('aria-label');
+    expect(button.getAttribute('aria-label')).not.toBe('');
+  });
+
+  it('aria-label says "Switch to dark mode" when in light mode', () => {
+    render(<ThemeToggle />);
+    expect(screen.getByRole('button', { name: 'Switch to dark mode' })).toBeInTheDocument();
+  });
+
+  it('aria-label updates to "Switch to light mode" after toggling to dark', () => {
+    render(<ThemeToggle />);
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByRole('button', { name: 'Switch to light mode' })).toBeInTheDocument();
+  });
+});
+
+describe('ThemeToggle feature descriptor', () => {
+  it('has the correct id, slot, and order', () => {
+    expect(ThemeToggleFeature.id).toBe('theme-toggle');
+    expect(ThemeToggleFeature.slot).toBe('header');
+    expect(ThemeToggleFeature.order).toBe(10);
+  });
 });
