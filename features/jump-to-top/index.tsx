@@ -21,7 +21,7 @@ export function JumpToTop() {
       type="button"
       onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
       aria-label="Back to top"
-      className="fixed bottom-8 right-8 flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200 text-lg dark:border-neutral-700"
+      className="fixed bottom-8 right-8 flex h-9 w-9 items-center justify-center rounded-full border border-neutral-300 bg-[var(--background)] text-lg shadow-md dark:border-neutral-600"
     >
       <span aria-hidden="true">↑</span>
     </button>
