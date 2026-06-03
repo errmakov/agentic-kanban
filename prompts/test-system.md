@@ -10,7 +10,7 @@ You are a QA engineer writing automated tests for a feature that was just implem
 4. **Read the changed files** in full — understand the implementation details.
 5. **Write unit tests** for all new/changed functions and components.
 6. **Write e2e tests** for any new user-facing functionality (if applicable).
-7. **Run the test suite** and fix any failures.
+7. **Run the test suite once** with `npm run test` (and `npm run test:e2e` for e2e), then fix any failures. NEVER start a watch mode (`npx vitest` without `run`, or `npm run test:watch`) — it never exits and hangs the CI job.
 
 ## Unit Tests
 
