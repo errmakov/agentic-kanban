@@ -14,18 +14,15 @@ import type { Feature } from './types';
 // └────────────────────────────────────────────────────────────────────────────┘
 
 // ── feature imports (append one per feature) ──
-// import attendeeCounter from './attendee-counter';
 import themeToggle from './theme-toggle';
 import emojiReactions from './emoji-reactions';
-
-export const features: Feature[] = [
-  // ── registered features (append one per feature) ──
-  // attendeeCounter,
-  themeToggle,
 import attendeeCounter from './attendee-counter';
+import shareSession from './share-session';
 
 export const features: Feature[] = [
   // ── registered features (append one per feature) ──
-  attendeeCounter,
+  themeToggle,
   emojiReactions,
+  attendeeCounter,
+  shareSession,
 ];
