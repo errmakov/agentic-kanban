@@ -87,6 +87,11 @@ whatever is registered for each. You add a feature by dropping a file in `featur
    export default feature;
    ```
 
+   > This one file is all you need — keep the `'use client'` directive (when you use
+   > state/effects) **and** the `Feature` descriptor in the same `index.tsx`. The slot
+   > renderer (`components/FeatureSlot.tsx`) runs on the client, so interactive features
+   > render correctly; you never split the component out or touch a layout file.
+
 2. Register it in `features/registry.ts` by APPENDING one import and one array entry:
 
    ```ts
