@@ -113,7 +113,7 @@ jobs:
           # pipefail (GitHub's default shell) keeps a claude failure failing the step.
           claude -p "$FULL_PROMPT" \
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash(npm install *),Bash(npm run build),Bash(npm run lint),Bash(npm run typecheck),Bash(npm run test),Bash(git diff *),Bash(git status)" \
-            --model claude-sonnet-4-6 \
+            --model claude-opus-4-8 \
             --max-turns 30 \
             --output-format json | tee /tmp/claude.json | jq -r '.result // empty'
 
