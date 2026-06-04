@@ -9,6 +9,12 @@ const SCHEDULE = [
 ];
 
 describe('getCurrentSession', () => {
+  it('returns a fallback when the schedule is empty', () => {
+    expect(getCurrentSession(new Date(2026, 5, 4, 10, 0), [])).toBe(
+      'No sessions scheduled',
+    );
+  });
+
   it('shows the first session as upcoming before it starts', () => {
     expect(getCurrentSession(new Date(2026, 5, 4, 7, 30), SCHEDULE)).toBe(
       'Up next: Opening Keynote',
