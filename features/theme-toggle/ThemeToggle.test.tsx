@@ -32,4 +32,31 @@ describe('ThemeToggle', () => {
     fireEvent.click(screen.getByRole('button'));
     expect(screen.getByRole('button', { name: 'Switch to light mode' })).toBeInTheDocument();
   });
+
+  it('initializes as dark when documentElement already has dark class', () => {
+    document.documentElement.classList.add('dark');
+    render(<ThemeToggle />);
+    expect(screen.getByRole('button', { name: 'Switch to light mode' })).toBeInTheDocument();
+  });
+
+  it('shows moon icon in light mode and sun icon in dark mode', () => {
+    render(<ThemeToggle />);
+    const button = screen.getByRole('button');
+    expect(button.textContent).toBe('🌙');
+    fireEvent.click(button);
+    expect(button.textContent).toBe('☀️');
+  });
+
+  it('persists dark preference to localStorage on toggle', () => {
+    render(<ThemeToggle />);
+    fireEvent.click(screen.getByRole('button'));
+    expect(localStorage.getItem('theme')).toBe('dark');
+  });
+
+  it('persists light preference to localStorage when toggling back', () => {
+    document.documentElement.classList.add('dark');
+    render(<ThemeToggle />);
+    fireEvent.click(screen.getByRole('button'));
+    expect(localStorage.getItem('theme')).toBe('light');
+  });
 });
