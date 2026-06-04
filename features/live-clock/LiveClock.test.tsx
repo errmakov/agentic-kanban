@@ -1,4 +1,5 @@
 import { render, screen, act } from '@testing-library/react';
+import { renderToString } from 'react-dom/server';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import feature from './index';
 
@@ -43,6 +44,18 @@ describe('LiveClock', () => {
     expect(el.getAttribute('dateTime')).toBe(
       new Date('2026-01-01T12:00:00').toISOString(),
     );
+  });
+
+  it('renders ——:——:—— placeholder in server-rendered output (no hydration mismatch)', () => {
+    const html = renderToString(<LiveClock />);
+    expect(html).toContain('——:——:——');
+  });
+
+  it('clears the interval on unmount', () => {
+    const { unmount } = render(<LiveClock />);
+    expect(vi.getTimerCount()).toBe(1);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 
