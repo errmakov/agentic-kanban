@@ -30,4 +30,10 @@ describe('VenueMapLink', () => {
     expect(feature.slot).toBe('footer');
     expect(feature.order).toBe(10);
   });
+
+  it('renders unconditionally without any env vars or props', () => {
+    // No env vars, no props — link must always be present
+    render(<VenueMapLink />);
+    expect(screen.getByRole('link', { name: 'Venue map' })).toBeInTheDocument();
+  });
 });
