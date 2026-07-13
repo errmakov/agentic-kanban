@@ -267,11 +267,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PROJECT_PAT }}
         run: |
-          chmod +x ./scripts/move-issue.sh
-          # One board scan reused for every merged issue (was one GraphQL scan PER issue).
-          BOARD_JSON=$(gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --format json --limit 50)
+          chmod +x ./scripts/move-issue.sh ./scripts/poll-board.sh
+          # One LEAN board scan (GraphQL, ~5 pts — same as the dispatcher) reused for
+          # every merged issue, instead of the fat item-list (which pulls every field
+          # value of every item, ~40-100 pts).
+          BOARD_JSON=$(./scripts/poll-board.sh "$PROJECT_OWNER" "$PROJECT_NUMBER")
           for ISSUE in ${{ steps.merge.outputs.merged }}; do
-            ITEM_ID=$(jq -r --argjson num "$ISSUE" '.items[] | select(.content.number == $num) | .id' <<<"$BOARD_JSON")
+            ITEM_ID=$(jq -r --argjson num "$ISSUE" '.[] | select(.number == $num) | .item_id' <<<"$BOARD_JSON")
             if [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
               ./scripts/move-issue.sh "$PROJECT_OWNER" "$PROJECT_NUMBER" "$ITEM_ID" "Done"
             fi
