@@ -37,6 +37,31 @@ describe('FaqAccordion', () => {
     expect(second).toHaveAttribute('aria-expanded', 'true');
     expect(first).toHaveAttribute('aria-expanded', 'false');
   });
+
+  it('shows the answer text in the DOM when question is expanded', () => {
+    render(<FaqAccordion />);
+    const [first] = screen.getAllByRole('button');
+    expect(screen.queryByText(/Tap any emoji/)).not.toBeInTheDocument();
+    fireEvent.click(first);
+    expect(screen.getByText(/Tap any emoji/)).toBeInTheDocument();
+  });
+
+  it('removes the answer from the DOM when question is collapsed', () => {
+    render(<FaqAccordion />);
+    const [first] = screen.getAllByRole('button');
+    fireEvent.click(first);
+    expect(screen.getByText(/Tap any emoji/)).toBeInTheDocument();
+    fireEvent.click(first);
+    expect(screen.queryByText(/Tap any emoji/)).not.toBeInTheDocument();
+  });
+
+  it('each button aria-controls matches the id of the answer panel', () => {
+    render(<FaqAccordion />);
+    const buttons = screen.getAllByRole('button');
+    buttons.forEach((btn, i) => {
+      expect(btn).toHaveAttribute('aria-controls', `faq-answer-${i}`);
+    });
+  });
 });
 
 describe('feature descriptor', () => {
