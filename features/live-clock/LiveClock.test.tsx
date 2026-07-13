@@ -39,6 +39,14 @@ describe('LiveClock', () => {
     expect(screen.getByText('09:08:08')).toBeInTheDocument();
   });
 
+  it('displays PM hours in 24-hour format without AM/PM suffix', () => {
+    vi.setSystemTime(new Date('2026-07-13T13:05:02'));
+    act(() => {
+      render(<LiveClock />);
+    });
+    expect(screen.getByText('13:05:02')).toBeInTheDocument();
+  });
+
   it('clears the interval on unmount', () => {
     const clearSpy = vi.spyOn(globalThis, 'clearInterval');
     let unmount: () => void;
