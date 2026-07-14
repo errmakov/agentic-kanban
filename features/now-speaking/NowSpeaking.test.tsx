@@ -20,6 +20,18 @@ describe('getCurrentSession', () => {
     expect(result?.upNext).toBe(false);
     expect(result?.session.title).toBe('Q&A and Wrap-up');
   });
+
+  it('transitions from upNext to current at exactly the session start time', () => {
+    const result = getCurrentSession(new Date('2026-07-14T09:00:00'));
+    expect(result?.upNext).toBe(false);
+    expect(result?.session.title).toBe('Opening Keynote');
+  });
+
+  it('returns the correct session between two scheduled sessions', () => {
+    const result = getCurrentSession(new Date('2026-07-14T14:30:00'));
+    expect(result?.upNext).toBe(false);
+    expect(result?.session.title).toBe('Build Session 3 — Shipping Live');
+  });
 });
 
 describe('NowSpeaking', () => {
@@ -43,5 +55,22 @@ describe('NowSpeaking', () => {
     render(<NowSpeaking />);
     expect(screen.getByText('Up next')).toBeInTheDocument();
     expect(screen.getByText('Opening Keynote')).toBeInTheDocument();
+  });
+
+  it('shows "Now speaking" with the last session title after the schedule ends', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-14T18:00:00'));
+    render(<NowSpeaking />);
+    expect(screen.getByText('Now speaking')).toBeInTheDocument();
+    expect(screen.getByText('Q&A and Wrap-up')).toBeInTheDocument();
+  });
+
+  it('renders an accessible region landmark labelled "Now speaking"', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-14T11:00:00'));
+    render(<NowSpeaking />);
+    expect(
+      screen.getByRole('region', { name: /now speaking/i }),
+    ).toBeInTheDocument();
   });
 });
