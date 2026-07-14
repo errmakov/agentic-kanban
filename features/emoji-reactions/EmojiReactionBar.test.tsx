@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EmojiReactionBar } from './index';
 
@@ -50,6 +50,80 @@ describe('EmojiReactionBar', () => {
           body: JSON.stringify({ emoji: '🔥' }),
         }),
       );
+    });
+  });
+
+  it('shows zero counts for all emojis when the initial GET fails', async () => {
+    vi.mocked(fetch).mockRejectedValue(new Error('Network error'));
+    render(<EmojiReactionBar />);
+    // Should not crash; buttons still render with zero counts
+    const buttons = screen.getAllByRole('button');
+    expect(buttons).toHaveLength(4);
+    const zeroSpans = screen.getAllByText('0');
+    expect(zeroSpans).toHaveLength(4);
+  });
+
+  it('updates the displayed count after a successful reaction', async () => {
+    const updatedCounts = { '👍': 4, '❤️': 1, '🔥': 0, '🎉': 5 };
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({ json: async () => ({ counts: initialCounts }) } as Response)
+      .mockResolvedValueOnce({ json: async () => ({ counts: updatedCounts }) } as Response);
+
+    render(<EmojiReactionBar />);
+    await waitFor(() => expect(screen.getByText('3')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'React with 👍' }));
+
+    await waitFor(() => expect(screen.getByText('4')).toBeInTheDocument());
+  });
+
+  it('disables the button while its reaction is in-flight', async () => {
+    let resolvePost!: (v: unknown) => void;
+    const postPending = new Promise((res) => { resolvePost = res; });
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({ json: async () => ({ counts: initialCounts }) } as Response)
+      .mockReturnValueOnce(postPending as Promise<Response>);
+
+    render(<EmojiReactionBar />);
+    await waitFor(() => expect(screen.getByText('3')).toBeInTheDocument());
+
+    const btn = screen.getByRole('button', { name: 'React with 👍' });
+    fireEvent.click(btn);
+
+    await waitFor(() => expect(btn).toBeDisabled());
+
+    // Resolve so the component can clean up pending state
+    await act(async () => {
+      resolvePost({ json: async () => ({ counts: initialCounts }) });
+    });
+  });
+
+  it('does not POST again when the button is disabled (double-tap prevention)', async () => {
+    let resolvePost!: (v: unknown) => void;
+    const postPending = new Promise((res) => { resolvePost = res; });
+
+    const fetchMock = vi.mocked(fetch);
+    fetchMock
+      .mockResolvedValueOnce({ json: async () => ({ counts: initialCounts }) } as Response)
+      .mockReturnValueOnce(postPending as Promise<Response>);
+
+    render(<EmojiReactionBar />);
+    await waitFor(() => expect(screen.getByText('3')).toBeInTheDocument());
+
+    const btn = screen.getByRole('button', { name: 'React with 👍' });
+    fireEvent.click(btn);
+
+    await waitFor(() => expect(btn).toBeDisabled());
+
+    // Second tap on the now-disabled button — React will not fire onClick for disabled buttons
+    fireEvent.click(btn);
+
+    // Only 1 GET + 1 POST should have been fired (not a third call)
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolvePost({ json: async () => ({ counts: initialCounts }) });
     });
   });
 });
