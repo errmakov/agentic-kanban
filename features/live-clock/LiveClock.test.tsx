@@ -1,4 +1,4 @@
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, cleanup } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import feature, { LiveClock } from './index';
 
@@ -9,6 +9,7 @@ describe('LiveClock', () => {
   });
 
   afterEach(() => {
+    cleanup(); // unmount while fake timers are still active, so clearInterval resolves correctly
     vi.useRealTimers();
   });
 
@@ -50,5 +51,80 @@ describe('LiveClock', () => {
     expect(feature.slot).toBe('header');
     expect(feature.order).toBe(20);
     expect(typeof feature.Component).toBe('function');
+  });
+
+  it('renders a <time> element with an ISO dateTime attribute after mount', () => {
+    render(<LiveClock />);
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    const timeEl = document.querySelector('time');
+    expect(timeEl).toBeInTheDocument();
+    expect(timeEl).toHaveAttribute('dateTime', new Date('2026-01-01T14:30:00').toISOString());
+  });
+
+  it('updates the dateTime attribute as the clock ticks', () => {
+    render(<LiveClock />);
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    const timeEl = document.querySelector('time');
+    expect(timeEl).toHaveAttribute('dateTime', new Date('2026-01-01T14:30:01').toISOString());
+  });
+
+  it('applies font-mono and tabular-nums classes for stable layout', () => {
+    render(<LiveClock />);
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    const timeEl = document.querySelector('time');
+    expect(timeEl?.className).toContain('font-mono');
+    expect(timeEl?.className).toContain('tabular-nums');
+  });
+
+  it('formats midnight as 00:00:00', () => {
+    vi.setSystemTime(new Date('2026-01-01T00:00:00'));
+    render(<LiveClock />);
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(screen.getByText('00:00:00')).toBeInTheDocument();
+  });
+
+  it('formats end-of-day as 23:59:59', () => {
+    vi.setSystemTime(new Date('2026-01-01T23:59:59'));
+    render(<LiveClock />);
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(screen.getByText('23:59:59')).toBeInTheDocument();
+  });
+
+  it('advances correctly across a minute boundary', () => {
+    vi.setSystemTime(new Date('2026-01-01T14:30:59'));
+    render(<LiveClock />);
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(screen.getByText('14:30:59')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByText('14:31:00')).toBeInTheDocument();
+  });
+
+  it('advances correctly across an hour boundary', () => {
+    vi.setSystemTime(new Date('2026-01-01T14:59:59'));
+    render(<LiveClock />);
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(screen.getByText('14:59:59')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByText('15:00:00')).toBeInTheDocument();
   });
 });
