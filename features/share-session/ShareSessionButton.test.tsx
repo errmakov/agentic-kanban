@@ -1,5 +1,5 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import feature from './index';
 
 const ShareSessionButton = feature.Component;
@@ -48,6 +48,45 @@ describe('ShareSessionButton', () => {
     const button = screen.getByRole('button', { name: /copy link to this session/i });
 
     expect(() => fireEvent.click(button)).not.toThrow();
+  });
+
+  it('does not show copied feedback when clipboard write is rejected', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('Permission denied'));
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+
+    render(<ShareSessionButton />);
+    const button = screen.getByRole('button', { name: /copy link to this session/i });
+
+    fireEvent.click(button);
+
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    expect(button.textContent).toContain('Share');
+    expect(button.textContent).not.toContain('Copied!');
+  });
+
+  it('reverts feedback label back to Share after 2 seconds', async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+
+    render(<ShareSessionButton />);
+    const button = screen.getByRole('button', { name: /copy link to this session/i });
+
+    fireEvent.click(button);
+
+    // Flush pending promises so the clipboard mock resolves and setCopied(true) runs
+    await act(async () => {});
+
+    expect(button.textContent).toContain('Copied!');
+
+    // Advance fake time past the 2-second reset
+    act(() => {
+      vi.advanceTimersByTime(2100);
+    });
+
+    expect(button.textContent).toContain('Share');
+    expect(button.textContent).not.toContain('Copied!');
+    vi.useRealTimers();
   });
 
   it('exports correct feature descriptor properties', () => {
